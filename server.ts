@@ -47,6 +47,8 @@ db.exec(`
     student_id INTEGER UNIQUE,
     total_xp INTEGER DEFAULT 0,
     level INTEGER DEFAULT 1,
+    coins INTEGER DEFAULT 0,
+    total_coins_earned INTEGER DEFAULT 0,
     FOREIGN KEY(student_id) REFERENCES students(id)
   );
 
@@ -62,6 +64,16 @@ db.exec(`
     FOREIGN KEY(session_id) REFERENCES sessions(id),
     FOREIGN KEY(student_id) REFERENCES students(id),
     FOREIGN KEY(book_id) REFERENCES books(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS student_room_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER,
+    item_key TEXT NOT NULL,
+    is_equipped INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(student_id, item_key),
+    FOREIGN KEY(student_id) REFERENCES students(id)
   );
 `);
 
@@ -85,6 +97,8 @@ ensureColumn("sessions", "timestamp", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 ensureColumn("sessions", "xp_earned", "INTEGER");
 ensureColumn("user_stats", "total_xp", "INTEGER DEFAULT 0");
 ensureColumn("user_stats", "level", "INTEGER DEFAULT 1");
+ensureColumn("user_stats", "coins", "INTEGER DEFAULT 0");
+ensureColumn("user_stats", "total_coins_earned", "INTEGER DEFAULT 0");
 ensureColumn("session_reflections", "session_id", "INTEGER");
 ensureColumn("session_reflections", "student_id", "INTEGER");
 ensureColumn("session_reflections", "book_id", "INTEGER");
@@ -92,6 +106,10 @@ ensureColumn("session_reflections", "question_index", "INTEGER");
 ensureColumn("session_reflections", "question_text", "TEXT");
 ensureColumn("session_reflections", "answer_text", "TEXT");
 ensureColumn("session_reflections", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+ensureColumn("student_room_items", "student_id", "INTEGER");
+ensureColumn("student_room_items", "item_key", "TEXT");
+ensureColumn("student_room_items", "is_equipped", "INTEGER DEFAULT 0");
+ensureColumn("student_room_items", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_students_class_nickname ON students(class_code, nickname);
@@ -101,12 +119,94 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sessions_student_id ON sessions(student_id);
   CREATE INDEX IF NOT EXISTS idx_reflections_student_id ON session_reflections(student_id);
   CREATE INDEX IF NOT EXISTS idx_reflections_session_id ON session_reflections(session_id);
+  CREATE INDEX IF NOT EXISTS idx_room_items_student_id ON student_room_items(student_id);
 `);
 
 const XP_PER_LEVEL = 500;
+const XP_MILESTONE_STEP = 500;
+const COIN_DIVISOR = 10;
+const MILESTONE_BONUS_COINS = 75;
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
 const ADMIN_ACCESS_CODE = (process.env.ADMIN_ACCESS_CODE || process.env.ADMIN_KEY || "Umphress1997!").trim();
+
+type RoomItemDefinition = {
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  cost_coins: number;
+  min_xp: number;
+};
+
+const ROOM_ITEM_CATALOG: RoomItemDefinition[] = [
+  {
+    key: "cozy_rug",
+    name: "Cozy Rug",
+    description: "A warm rug to make the room feel homey.",
+    category: "floor",
+    cost_coins: 25,
+    min_xp: 0,
+  },
+  {
+    key: "wall_poster",
+    name: "Story Poster",
+    description: "A bright poster for your reading wall.",
+    category: "wall",
+    cost_coins: 45,
+    min_xp: 120,
+  },
+  {
+    key: "desk_plant",
+    name: "Desk Plant",
+    description: "A small green plant near the computer.",
+    category: "desk",
+    cost_coins: 60,
+    min_xp: 220,
+  },
+  {
+    key: "window_curtains",
+    name: "Curtains",
+    description: "Soft curtains for the bedroom window.",
+    category: "window",
+    cost_coins: 85,
+    min_xp: 320,
+  },
+  {
+    key: "bed_blanket",
+    name: "Comfy Blanket",
+    description: "A colorful blanket upgrade for your bed.",
+    category: "bed",
+    cost_coins: 95,
+    min_xp: 420,
+  },
+  {
+    key: "desk_lamp",
+    name: "Desk Lamp",
+    description: "A reading lamp for late-night quests.",
+    category: "desk",
+    cost_coins: 120,
+    min_xp: 520,
+  },
+  {
+    key: "string_lights",
+    name: "String Lights",
+    description: "Twinkle lights around the room.",
+    category: "wall",
+    cost_coins: 150,
+    min_xp: 700,
+  },
+  {
+    key: "book_trophy",
+    name: "Book Trophy",
+    description: "A trophy that celebrates your reading wins.",
+    category: "shelf",
+    cost_coins: 220,
+    min_xp: 900,
+  },
+];
+
+const roomCatalogByKey = new Map(ROOM_ITEM_CATALOG.map((item) => [item.key, item]));
 
 type StudentIdentity = {
   classCode: string;
@@ -183,6 +283,62 @@ const parseReflectionEntries = (questions: unknown, answers: unknown) => {
   return entries;
 };
 
+const getSessionCoinRewards = (previousXp: number, xpEarned: number) => {
+  const safePreviousXp = Math.max(0, Math.floor(previousXp || 0));
+  const safeXpEarned = Math.max(0, Math.floor(xpEarned || 0));
+
+  const baseCoins = Math.max(1, Math.floor(safeXpEarned / COIN_DIVISOR));
+  const milestonesCrossed =
+    Math.floor((safePreviousXp + safeXpEarned) / XP_MILESTONE_STEP) - Math.floor(safePreviousXp / XP_MILESTONE_STEP);
+  const milestoneCoins = Math.max(0, milestonesCrossed) * MILESTONE_BONUS_COINS;
+
+  return {
+    baseCoins,
+    milestoneCoins,
+    totalCoins: baseCoins + milestoneCoins,
+    milestonesCrossed: Math.max(0, milestonesCrossed),
+  };
+};
+
+const buildRoomState = (studentId: number) => {
+  const stats =
+    (db
+      .prepare("SELECT total_xp, coins FROM user_stats WHERE student_id = ? ORDER BY id ASC LIMIT 1")
+      .get(studentId) as { total_xp?: number; coins?: number } | undefined) ?? {};
+
+  const totalXp = Number(stats.total_xp ?? 0);
+  const coins = Number(stats.coins ?? 0);
+  const nextMilestoneXp = (Math.floor(totalXp / XP_MILESTONE_STEP) + 1) * XP_MILESTONE_STEP;
+
+  const ownedRows = db
+    .prepare("SELECT item_key, is_equipped FROM student_room_items WHERE student_id = ?")
+    .all(studentId) as Array<{ item_key: string; is_equipped: number }>;
+  const ownedMap = new Map<string, boolean>();
+  for (const row of ownedRows) {
+    if (typeof row.item_key === "string") {
+      ownedMap.set(row.item_key, Boolean(row.is_equipped));
+    }
+  }
+
+  const items = ROOM_ITEM_CATALOG.map((item) => {
+    const owned = ownedMap.has(item.key);
+    const equipped = ownedMap.get(item.key) ?? false;
+    return {
+      ...item,
+      owned,
+      equipped,
+      unlocked: totalXp >= item.min_xp,
+    };
+  });
+
+  return {
+    total_xp: totalXp,
+    coins,
+    next_milestone_xp: nextMilestoneXp,
+    items,
+  };
+};
+
 const toPositiveInt = (value: unknown) => {
   const parsed = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -235,7 +391,9 @@ const getOrCreateStudentId = (classCode: string, nickname: string) => {
     throw new Error("Unable to resolve student identity");
   }
 
-  db.prepare("INSERT OR IGNORE INTO user_stats (student_id, total_xp, level) VALUES (?, 0, 1)").run(student.id);
+  db
+    .prepare("INSERT OR IGNORE INTO user_stats (student_id, total_xp, level, coins, total_coins_earned) VALUES (?, 0, 1, 0, 0)")
+    .run(student.id);
   return student.id;
 };
 
@@ -264,8 +422,8 @@ async function startServer() {
 
     const stats =
       (db.prepare("SELECT * FROM user_stats WHERE student_id = ? LIMIT 1").get(student.studentId) as
-        | { total_xp: number; level: number }
-        | undefined) ?? { total_xp: 0, level: 1 };
+        | { total_xp: number; level: number; coins?: number; total_coins_earned?: number }
+        | undefined) ?? { total_xp: 0, level: 1, coins: 0, total_coins_earned: 0 };
 
     const totalSessions = db
       .prepare("SELECT COUNT(*) as count FROM sessions WHERE student_id = ?")
@@ -282,6 +440,7 @@ async function startServer() {
       total_sessions: totalSessions.count,
       total_hours: Math.round(((totalMinutes.total || 0) / 60) * 10) / 10,
       total_books: totalBooks.count,
+      next_milestone_xp: (Math.floor((stats.total_xp || 0) / XP_MILESTONE_STEP) + 1) * XP_MILESTONE_STEP,
     });
   });
 
@@ -394,16 +553,37 @@ async function startServer() {
       studentId
     );
 
-    db.prepare("UPDATE user_stats SET total_xp = total_xp + ? WHERE student_id = ?").run(payload.xp_earned, studentId);
+    const currentStats =
+      (db
+        .prepare("SELECT total_xp, coins, total_coins_earned FROM user_stats WHERE student_id = ? LIMIT 1")
+        .get(studentId) as { total_xp?: number; coins?: number; total_coins_earned?: number } | undefined) ?? {};
+    const previousXp = Number(currentStats.total_xp ?? 0);
+    const previousCoins = Number(currentStats.coins ?? 0);
+    const previousTotalCoinsEarned = Number(currentStats.total_coins_earned ?? 0);
+    const safeXpEarned = Math.max(0, Math.floor(payload.xp_earned || 0));
+    const coinRewards = getSessionCoinRewards(previousXp, safeXpEarned);
+    const totalXp = previousXp + safeXpEarned;
+    const newLevel = Math.floor(totalXp / XP_PER_LEVEL) + 1;
+    const newCoins = previousCoins + coinRewards.totalCoins;
+    const newTotalCoinsEarned = previousTotalCoinsEarned + coinRewards.totalCoins;
 
-    const stats = db
-      .prepare("SELECT total_xp FROM user_stats WHERE student_id = ? LIMIT 1")
-      .get(studentId) as { total_xp: number };
-    const newLevel = Math.floor((stats?.total_xp ?? 0) / XP_PER_LEVEL) + 1;
+    db.prepare(
+      `
+        UPDATE user_stats
+        SET total_xp = ?, level = ?, coins = ?, total_coins_earned = ?
+        WHERE student_id = ?
+      `
+    ).run(totalXp, newLevel, newCoins, newTotalCoinsEarned, studentId);
 
-    db.prepare("UPDATE user_stats SET level = ? WHERE student_id = ?").run(newLevel, studentId);
-
-    return sessionId;
+    return {
+      sessionId,
+      totalXp,
+      level: newLevel,
+      coins: newCoins,
+      coinsEarned: coinRewards.totalCoins,
+      milestoneBonusCoins: coinRewards.milestoneCoins,
+      milestonesReached: coinRewards.milestonesCrossed,
+    };
   });
 
   app.post("/api/sessions", (req, res) => {
@@ -432,7 +612,7 @@ async function startServer() {
       return res.status(404).json({ error: "Book not found for this student" });
     }
 
-    const sessionId = runSessionTransaction(
+    const sessionResult = runSessionTransaction(
       {
         book_id,
         start_page,
@@ -446,7 +626,96 @@ async function startServer() {
       student.studentId
     );
 
-    res.json({ success: true, session_id: sessionId });
+    res.json({
+      success: true,
+      session_id: sessionResult.sessionId,
+      total_xp: sessionResult.totalXp,
+      level: sessionResult.level,
+      coins: sessionResult.coins,
+      coins_earned: sessionResult.coinsEarned,
+      milestone_bonus_coins: sessionResult.milestoneBonusCoins,
+      milestones_reached: sessionResult.milestonesReached,
+    });
+  });
+
+  app.get("/api/room", (req, res) => {
+    const student = resolveStudent(req, res);
+    if (!student) return;
+
+    return res.json(buildRoomState(student.studentId));
+  });
+
+  app.post("/api/room", (req, res) => {
+    const student = resolveStudent(req, res);
+    if (!student) return;
+
+    const action = getStringValue(req.body?.action).trim().toLowerCase();
+    const itemKey = getStringValue(req.body?.item_key).trim();
+    const item = roomCatalogByKey.get(itemKey);
+    if (!item) {
+      return res.status(400).json({ error: "Invalid item_key" });
+    }
+
+    const roomStateBefore = buildRoomState(student.studentId);
+    const targetItem = roomStateBefore.items.find((row) => row.key === item.key);
+    const alreadyOwned = Boolean(targetItem?.owned);
+
+    if (action === "purchase") {
+      if (alreadyOwned) {
+        return res.status(400).json({ error: "Item already owned" });
+      }
+      if (!targetItem?.unlocked) {
+        return res.status(400).json({ error: "Not enough XP to unlock this item" });
+      }
+      if (roomStateBefore.coins < item.cost_coins) {
+        return res.status(400).json({ error: "Not enough coins" });
+      }
+
+      const coinUpdate = db.prepare("UPDATE user_stats SET coins = coins - ? WHERE student_id = ? AND coins >= ?").run(
+        item.cost_coins,
+        student.studentId,
+        item.cost_coins
+      );
+      if (!coinUpdate.changes) {
+        return res.status(400).json({ error: "Not enough coins" });
+      }
+      db.prepare(
+        `
+          INSERT INTO student_room_items (student_id, item_key, is_equipped)
+          VALUES (?, ?, 1)
+          ON CONFLICT(student_id, item_key) DO UPDATE SET is_equipped = 1
+        `
+      ).run(student.studentId, item.key);
+    } else if (action === "equip") {
+      if (!alreadyOwned) {
+        return res.status(400).json({ error: "Purchase this item first" });
+      }
+      db.prepare("UPDATE student_room_items SET is_equipped = 1 WHERE student_id = ? AND item_key = ?").run(
+        student.studentId,
+        item.key
+      );
+    } else if (action === "unequip") {
+      db.prepare("UPDATE student_room_items SET is_equipped = 0 WHERE student_id = ? AND item_key = ?").run(
+        student.studentId,
+        item.key
+      );
+    } else {
+      return res.status(400).json({ error: "Invalid action" });
+    }
+
+    const categoryKeys = ROOM_ITEM_CATALOG.filter((row) => row.category === item.category)
+      .map((row) => row.key)
+      .filter((key) => key !== item.key);
+    if ((action === "purchase" || action === "equip") && categoryKeys.length > 0) {
+      const placeholders = categoryKeys.map(() => "?").join(",");
+      db.prepare(
+        `UPDATE student_room_items
+         SET is_equipped = 0
+         WHERE student_id = ? AND item_key IN (${placeholders})`
+      ).run(student.studentId, ...categoryKeys);
+    }
+
+    return res.json(buildRoomState(student.studentId));
   });
 
   app.get("/api/admin/roster", (req, res) => {
@@ -473,6 +742,8 @@ async function startServer() {
           s.created_at,
           COALESCE(us.total_xp, 0) as total_xp,
           COALESCE(us.level, 1) as level,
+          COALESCE(us.coins, 0) as coins,
+          COALESCE(us.total_coins_earned, 0) as total_coins_earned,
           COALESCE(ss.total_sessions, 0) as total_sessions,
           COALESCE(ss.total_minutes, 0) as total_minutes,
           ab.title as active_book,
@@ -585,6 +856,61 @@ async function startServer() {
     });
   });
 
+  app.post("/api/admin/coins", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+
+    const studentId = toPositiveInt(req.body?.student_id);
+    const coins = toPositiveInt(req.body?.coins);
+    if (!studentId) {
+      return res.status(400).json({ error: "Invalid student_id" });
+    }
+    if (!coins) {
+      return res.status(400).json({ error: "Invalid coins amount" });
+    }
+
+    const studentExists = db.prepare("SELECT id FROM students WHERE id = ? LIMIT 1").get(studentId);
+    if (!studentExists) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const updated = db
+      .prepare(
+        `
+          UPDATE user_stats
+          SET coins = COALESCE(coins, 0) + ?, total_coins_earned = COALESCE(total_coins_earned, 0) + ?
+          WHERE student_id = ?
+        `
+      )
+      .run(coins, coins, studentId);
+
+    if (updated.changes > 0) {
+      const stats = db
+        .prepare("SELECT coins, total_coins_earned FROM user_stats WHERE student_id = ? LIMIT 1")
+        .get(studentId) as { coins: number; total_coins_earned: number } | undefined;
+
+      return res.json({
+        student_id: studentId,
+        granted_coins: coins,
+        coins: stats?.coins ?? coins,
+        total_coins_earned: stats?.total_coins_earned ?? coins,
+      });
+    }
+
+    db.prepare(
+      `
+        INSERT INTO user_stats (student_id, total_xp, level, coins, total_coins_earned)
+        VALUES (?, 0, 1, ?, ?)
+      `
+    ).run(studentId, coins, coins);
+
+    return res.json({
+      student_id: studentId,
+      granted_coins: coins,
+      coins,
+      total_coins_earned: coins,
+    });
+  });
+
   app.post("/api/admin/students", (req, res) => {
     if (!requireAdmin(req, res)) return;
 
@@ -622,7 +948,11 @@ async function startServer() {
         .get(classCode, nickname) as { id?: number } | undefined;
 
       if (student?.id) {
-        db.prepare("INSERT OR IGNORE INTO user_stats (student_id, total_xp, level) VALUES (?, 0, 1)").run(student.id);
+        db
+          .prepare(
+            "INSERT OR IGNORE INTO user_stats (student_id, total_xp, level, coins, total_coins_earned) VALUES (?, 0, 1, 0, 0)"
+          )
+          .run(student.id);
       }
     }
 
@@ -644,6 +974,7 @@ async function startServer() {
 
     const deleteStudentData = db.transaction((id: number) => {
       const deletedReflections = db.prepare("DELETE FROM session_reflections WHERE student_id = ?").run(id).changes;
+      const deletedRoomItems = db.prepare("DELETE FROM student_room_items WHERE student_id = ?").run(id).changes;
       const deletedSessions = db.prepare("DELETE FROM sessions WHERE student_id = ?").run(id).changes;
       const deletedBooks = db.prepare("DELETE FROM books WHERE student_id = ?").run(id).changes;
       const deletedStats = db.prepare("DELETE FROM user_stats WHERE student_id = ?").run(id).changes;
@@ -652,6 +983,7 @@ async function startServer() {
       return {
         deleted_students: deletedStudents,
         deleted_reflections: deletedReflections,
+        deleted_room_items: deletedRoomItems,
         deleted_sessions: deletedSessions,
         deleted_books: deletedBooks,
         deleted_stats: deletedStats,
@@ -680,6 +1012,7 @@ async function startServer() {
           class_code: code,
           deleted_students: 0,
           deleted_reflections: 0,
+          deleted_room_items: 0,
           deleted_sessions: 0,
           deleted_books: 0,
           deleted_stats: 0,
@@ -689,6 +1022,9 @@ async function startServer() {
       const placeholders = ids.map(() => "?").join(",");
       const deletedReflections = db
         .prepare(`DELETE FROM session_reflections WHERE student_id IN (${placeholders})`)
+        .run(...ids).changes;
+      const deletedRoomItems = db
+        .prepare(`DELETE FROM student_room_items WHERE student_id IN (${placeholders})`)
         .run(...ids).changes;
       const deletedSessions = db
         .prepare(`DELETE FROM sessions WHERE student_id IN (${placeholders})`)
@@ -707,6 +1043,7 @@ async function startServer() {
         class_code: code,
         deleted_students: deletedStudents,
         deleted_reflections: deletedReflections,
+        deleted_room_items: deletedRoomItems,
         deleted_sessions: deletedSessions,
         deleted_books: deletedBooks,
         deleted_stats: deletedStats,

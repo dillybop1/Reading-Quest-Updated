@@ -25,6 +25,8 @@ import {
   AdminRosterResponse,
   AdminCreateStudentsResponse,
   AdminReflectionsResponse,
+  RoomStateResponse,
+  SessionRewardSummary,
 } from "./types";
 
 const STUDENT_STORAGE_KEY = "reading-quest-student";
@@ -55,6 +57,8 @@ export default function App() {
   const [teacherSetupResult, setTeacherSetupResult] = useState<AdminCreateStudentsResponse | null>(null);
   const [isTeacherSetupSaving, setIsTeacherSetupSaving] = useState(false);
   const [adminReflections, setAdminReflections] = useState<AdminReflectionsResponse | null>(null);
+  const [grantCoinsInputByStudent, setGrantCoinsInputByStudent] = useState<Record<number, string>>({});
+  const [grantCoinsBusyStudentId, setGrantCoinsBusyStudentId] = useState<number | null>(null);
   const [responsesSearchInput, setResponsesSearchInput] = useState("");
   const [responsesClassFilter, setResponsesClassFilter] = useState("all");
   const [responsesStudentFilter, setResponsesStudentFilter] = useState("all");
@@ -63,7 +67,17 @@ export default function App() {
   const adminTapResetRef = useRef<NodeJS.Timeout | null>(null);
   const [adminAccessKey, setAdminAccessKey] = useState<string | null>(null);
   const [view, setView] = useState<
-    "loading" | "student" | "admin" | "setup" | "bookshelf" | "dashboard" | "reading" | "summary" | "questions" | "celebration"
+    | "loading"
+    | "student"
+    | "admin"
+    | "setup"
+    | "bookshelf"
+    | "room"
+    | "dashboard"
+    | "reading"
+    | "summary"
+    | "questions"
+    | "celebration"
   >("loading");
   
   // Reading Session State
@@ -83,6 +97,10 @@ export default function App() {
 
   // Celebration State
   const [earnedXp, setEarnedXp] = useState(0);
+  const [sessionRewardSummary, setSessionRewardSummary] = useState<SessionRewardSummary | null>(null);
+  const [roomState, setRoomState] = useState<RoomStateResponse | null>(null);
+  const [roomError, setRoomError] = useState<string | null>(null);
+  const [roomBusyKey, setRoomBusyKey] = useState<string | null>(null);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
@@ -142,6 +160,13 @@ export default function App() {
   const getBookProgressPercent = (book: Book) => {
     if (!book.total_pages) return 0;
     return Math.max(0, Math.min(100, Math.round((book.current_page / book.total_pages) * 100)));
+  };
+
+  const getMilestoneProgressPercent = (totalXp: number, nextMilestoneXp: number) => {
+    const safeNextMilestone = Math.max(500, nextMilestoneXp || 500);
+    const milestoneStart = safeNextMilestone - 500;
+    const progress = ((totalXp - milestoneStart) / 500) * 100;
+    return Math.max(0, Math.min(100, progress));
   };
 
   const getStudentFilterKey = (classCode: string, nickname: string) => `${classCode}::${nickname}`;
@@ -335,6 +360,75 @@ export default function App() {
     }
   };
 
+  const loadRoomState = async () => {
+    if (!student) return null;
+    setRoomError(null);
+
+    try {
+      const response = await fetch(withStudentQuery("/api/room"));
+      if (!response.ok) {
+        let message = `Failed to load room: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          if (typeof errorBody?.error === "string") {
+            message = errorBody.error;
+          }
+        } catch {
+          // Ignore JSON parse failure and use default message.
+        }
+        throw new Error(message);
+      }
+
+      const data = (await response.json()) as RoomStateResponse;
+      setRoomState(data);
+      return data;
+    } catch (err: any) {
+      setRoomError(String(err?.message ?? err));
+      return null;
+    }
+  };
+
+  const handleRoomAction = async (action: "purchase" | "equip" | "unequip", itemKey: string) => {
+    if (!student) return;
+    setRoomBusyKey(itemKey);
+    setRoomError(null);
+
+    try {
+      const response = await fetch("/api/room", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action,
+          item_key: itemKey,
+          class_code: student.class_code,
+          nickname: student.nickname,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Room action failed: ${response.status}`);
+      }
+
+      const nextRoomState = data as RoomStateResponse;
+      setRoomState(nextRoomState);
+      setStats((prev) =>
+        prev
+          ? {
+              ...prev,
+              total_xp: nextRoomState.total_xp,
+              coins: nextRoomState.coins,
+              next_milestone_xp: nextRoomState.next_milestone_xp,
+            }
+          : prev
+      );
+    } catch (err: any) {
+      setRoomError(String(err?.message ?? err));
+    } finally {
+      setRoomBusyKey(null);
+    }
+  };
+
   const handleHiddenAdminTap = () => {
     setAdminTapCount((prev) => {
       const next = prev + 1;
@@ -384,7 +478,7 @@ export default function App() {
     }
 
     const confirmed = window.confirm(
-      `Delete ${nickname} from ${classCode}? This removes their books, sessions, and stats.`
+      `Delete ${nickname} from ${classCode}? This removes their books, sessions, stats, and room items.`
     );
     if (!confirmed) return;
 
@@ -421,7 +515,7 @@ export default function App() {
     }
 
     const confirmed = window.confirm(
-      `Delete class ${classCode} and ${studentCount} student record(s)? This removes all related books, sessions, and stats.`
+      `Delete class ${classCode} and ${studentCount} student record(s)? This removes all related books, sessions, stats, and room items.`
     );
     if (!confirmed) return;
 
@@ -448,6 +542,49 @@ export default function App() {
       setAdminError(String(err?.message ?? err));
     } finally {
       setDeleteBusyKey(null);
+    }
+  };
+
+  const handleGrantCoins = async (studentId: number) => {
+    if (!adminAccessKey) {
+      setAdminError("Admin session expired. Re-open admin mode.");
+      return;
+    }
+
+    const raw = grantCoinsInputByStudent[studentId] ?? "";
+    const coins = Number.parseInt(raw, 10);
+    if (!Number.isFinite(coins) || coins <= 0) {
+      setAdminError("Enter a positive coin amount.");
+      return;
+    }
+
+    setGrantCoinsBusyStudentId(studentId);
+    setAdminError(null);
+
+    try {
+      const response = await fetch("/api/admin/coins", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminAccessKey,
+        },
+        body: JSON.stringify({ student_id: studentId, coins }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Coin update failed: ${response.status}`);
+      }
+
+      setGrantCoinsInputByStudent((prev) => ({
+        ...prev,
+        [studentId]: "",
+      }));
+      await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
+    } catch (err: any) {
+      setAdminError(String(err?.message ?? err));
+    } finally {
+      setGrantCoinsBusyStudentId(null);
     }
   };
 
@@ -514,10 +651,11 @@ export default function App() {
     }
 
     try {
-      const [booksResult, activeBookResult, statsResult] = await Promise.allSettled([
+      const [booksResult, activeBookResult, statsResult, roomResult] = await Promise.allSettled([
         fetch(withStudentQuery("/api/books")),
         fetch(withStudentQuery("/api/books/active")),
         fetch(withStudentQuery("/api/stats")),
+        fetch(withStudentQuery("/api/room")),
       ]);
 
       let booksData: Book[] = [];
@@ -568,6 +706,18 @@ export default function App() {
         console.error("stats request failed", statsResult.reason);
       }
 
+      if (roomResult.status === "fulfilled") {
+        if (roomResult.value.ok) {
+          const roomData = (await roomResult.value.json()) as RoomStateResponse;
+          setRoomState(roomData);
+          setRoomError(null);
+        } else {
+          console.error(`room failed: ${roomResult.value.status}`);
+        }
+      } else {
+        console.error("room request failed", roomResult.reason);
+      }
+
       if (booksData.length === 0 && !statsData) {
         setView("setup");
         return;
@@ -582,6 +732,7 @@ export default function App() {
 
   const handleStartSession = () => {
     if (!activeBook) return;
+    setSessionRewardSummary(null);
     setTimerSeconds(0);
     setIsTimerRunning(true);
     setView("reading");
@@ -605,6 +756,7 @@ export default function App() {
 
   const handleSummarySubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setSessionRewardSummary(null);
     setAnswers([]);
     setCurrentQuestionIndex(0);
     setView("questions");
@@ -649,6 +801,8 @@ export default function App() {
     setAdminError(null);
     setAdminRoster(null);
     setAdminReflections(null);
+    setGrantCoinsInputByStudent({});
+    setGrantCoinsBusyStudentId(null);
     setResponsesSearchInput("");
     setResponsesClassFilter("all");
     setResponsesStudentFilter("all");
@@ -669,6 +823,10 @@ export default function App() {
     setActiveBook(null);
     setShowAddBookForm(false);
     setStats(null);
+    setSessionRewardSummary(null);
+    setRoomState(null);
+    setRoomError(null);
+    setRoomBusyKey(null);
     setAnswers([]);
     setCurrentQuestionIndex(0);
     setStartPage(0);
@@ -728,6 +886,18 @@ export default function App() {
       if (!response.ok) {
         throw new Error(`Failed to save session: ${response.status}`);
       }
+
+      const rewardData = (await response.json()) as Partial<SessionRewardSummary> & {
+        coins?: number;
+      };
+      setSessionRewardSummary({
+        total_xp: Number(rewardData.total_xp ?? (stats?.total_xp ?? 0)),
+        level: Number(rewardData.level ?? (stats?.level ?? 1)),
+        coins: Number(rewardData.coins ?? (stats?.coins ?? 0)),
+        coins_earned: Number(rewardData.coins_earned ?? 0),
+        milestone_bonus_coins: Number(rewardData.milestone_bonus_coins ?? 0),
+        milestones_reached: Number(rewardData.milestones_reached ?? 0),
+      });
 
       setActiveBook(prev =>
         prev && prev.id === sessionData.book_id
@@ -818,6 +988,15 @@ export default function App() {
     }
   };
 
+  const isRoomItemEquipped = (itemKey: string) => Boolean(roomState?.items?.some((item) => item.key === itemKey && item.equipped));
+  const showRoomShell = Boolean(student) && view !== "student" && view !== "admin" && view !== "loading";
+  const appShellClassName = showRoomShell
+    ? "h-screen w-full room-shell-active overflow-hidden"
+    : "min-h-screen p-4 md:p-8 max-w-2xl mx-auto";
+  const contentShellClassName = showRoomShell
+    ? "room-content-layer max-w-2xl mx-auto p-3 md:p-4 h-full flex flex-col"
+    : "";
+
   if (view === "loading") {
     return (
       <div
@@ -850,8 +1029,10 @@ export default function App() {
 
   return (
     <div
-      className={`min-h-screen p-4 md:p-8 max-w-2xl mx-auto ${
+      className={`${appShellClassName} ${
         view === "student" ? "student-shell" : ""
+      } ${
+        isRoomItemEquipped("window_curtains") ? "has-curtains" : ""
       } ${isDarkMode ? "theme-dark" : "theme-light"}`}
     >
       <button
@@ -870,9 +1051,29 @@ export default function App() {
         </span>
       </button>
 
+      {showRoomShell && (
+        <div className="room-frame" aria-hidden="true">
+          <div className="room-frame-window" />
+          <div className="room-frame-bookshelf" />
+          <div className="room-frame-bed" />
+          <div className="room-frame-desk" />
+          <div className="room-frame-computer" />
+          <div className="room-frame-floor-detail" />
+          {isRoomItemEquipped("cozy_rug") && <div className="room-frame-item room-frame-rug" />}
+          {isRoomItemEquipped("wall_poster") && <div className="room-frame-item room-frame-poster" />}
+          {isRoomItemEquipped("desk_plant") && <div className="room-frame-item room-frame-plant" />}
+          {isRoomItemEquipped("bed_blanket") && <div className="room-frame-item room-frame-blanket" />}
+          {isRoomItemEquipped("desk_lamp") && <div className="room-frame-item room-frame-lamp" />}
+          {isRoomItemEquipped("string_lights") && <div className="room-frame-item room-frame-lights" />}
+          {isRoomItemEquipped("book_trophy") && <div className="room-frame-item room-frame-trophy" />}
+        </div>
+      )}
+
+      <div className={contentShellClassName}>
+
       {/* Header / XP Bar */}
       {student && view !== "student" && view !== "admin" && (
-        <header className="mb-8">
+        <header className={showRoomShell ? "mb-3" : "mb-8"}>
           <div className="flex justify-between items-end mb-2">
             <div className="flex items-center gap-2">
               <button
@@ -893,8 +1094,13 @@ export default function App() {
               </div>
             </div>
             <div className="text-right">
-              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total XP</p>
-              <p className="font-display font-bold text-xl text-amber-600">{stats?.total_xp}</p>
+              <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total XP / Coins</p>
+              <p className="font-display font-bold text-xl text-amber-600">
+                {stats?.total_xp ?? 0} XP
+              </p>
+              <p className="font-display font-bold text-lg text-emerald-600">
+                {stats?.coins ?? 0} Coins
+              </p>
               <button
                 onClick={handleSwitchStudent}
                 className="text-xs font-bold uppercase tracking-wide text-sky-600 hover:text-sky-700 mt-1"
@@ -908,12 +1114,18 @@ export default function App() {
             <motion.div
               className="h-full bg-amber-400"
               initial={{ width: 0 }}
-              animate={{ width: `${((stats?.total_xp || 0) % 500) / 500 * 100}%` }}
+              animate={{
+                width: `${getMilestoneProgressPercent(stats?.total_xp || 0, stats?.next_milestone_xp || 500)}%`,
+              }}
             />
           </div>
+          <p className="text-[11px] mt-2 text-slate-500 font-semibold">
+            Next milestone at {stats?.next_milestone_xp ?? 500} XP
+          </p>
         </header>
       )}
 
+      <main className={showRoomShell ? "flex-1 min-h-0" : ""}>
       <AnimatePresence mode="wait">
         {view === "student" && (
           <motion.div
@@ -1097,9 +1309,11 @@ export default function App() {
                             <th className="pb-2 pr-4">Nickname</th>
                             <th className="pb-2 pr-4">Level</th>
                             <th className="pb-2 pr-4">XP</th>
+                            <th className="pb-2 pr-4">Coins</th>
                             <th className="pb-2 pr-4">Quests</th>
                             <th className="pb-2 pr-4">Hours</th>
                             <th className="pb-2">Active Book</th>
+                            <th className="pb-2 pl-3">Grant Coins</th>
                             <th className="pb-2 pl-3">Delete</th>
                           </tr>
                         </thead>
@@ -1110,12 +1324,39 @@ export default function App() {
                               <td className="py-2 pr-4">{row.nickname}</td>
                               <td className="py-2 pr-4">{row.level}</td>
                               <td className="py-2 pr-4">{row.total_xp}</td>
+                              <td className="py-2 pr-4 font-semibold text-emerald-700">{row.coins ?? 0}</td>
                               <td className="py-2 pr-4">{row.total_sessions}</td>
                               <td className="py-2 pr-4">{(row.total_minutes / 60).toFixed(1)}</td>
                               <td className="py-2">
                                 {row.active_book
                                   ? `${row.active_book} (${row.current_page ?? 0}/${row.total_pages ?? 0})`
                                   : "No active book"}
+                              </td>
+                              <td className="py-2 pl-3">
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    value={grantCoinsInputByStudent[row.id] ?? ""}
+                                    onChange={(e) =>
+                                      setGrantCoinsInputByStudent((prev) => ({
+                                        ...prev,
+                                        [row.id]: e.target.value,
+                                      }))
+                                    }
+                                    type="number"
+                                    min={1}
+                                    className="w-20 rounded-lg border border-slate-300 px-2 py-1 text-xs"
+                                    placeholder="50"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleGrantCoins(row.id)}
+                                    disabled={grantCoinsBusyStudentId === row.id}
+                                    className="px-2 py-1 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50 text-xs font-bold"
+                                    title="Grant coins"
+                                  >
+                                    Give
+                                  </button>
+                                </div>
                               </td>
                               <td className="py-2 pl-3">
                                 <button
@@ -1389,14 +1630,28 @@ export default function App() {
                   <h2 className="text-2xl font-bold">My Bookshelf</h2>
                   <p className="text-slate-500 font-medium">Choose a book spine to make it your current quest.</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setShowAddBookForm((prev) => !prev)}
-                  className="quest-button px-4 py-2 text-sm flex items-center gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  {showAddBookForm ? "Close" : "Add to Bookshelf"}
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setView("room");
+                      if (!roomState) {
+                        void loadRoomState();
+                      }
+                    }}
+                    className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+                  >
+                    My Room
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddBookForm((prev) => !prev)}
+                    className="quest-button px-4 py-2 text-sm flex items-center gap-2"
+                  >
+                    <Plus className="w-4 h-4" />
+                    {showAddBookForm ? "Close" : "Add to Bookshelf"}
+                  </button>
+                </div>
               </div>
 
               {showAddBookForm && (
@@ -1443,6 +1698,114 @@ export default function App() {
                 </div>
               ) : (
                 <p className="text-slate-500 font-medium">No books yet. Add one to start your shelf.</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+
+        {view === "room" && (
+          <motion.div
+            key="room"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="space-y-6"
+          >
+            <div className="quest-card">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-2xl font-bold">My Reading Room</h2>
+                  <p className="text-slate-500 font-medium">
+                    Earn XP, collect coins, and decorate your room.
+                  </p>
+                  <p className="text-xs font-semibold text-slate-500 mt-1">
+                    Every 500 XP milestone grants a bonus coin reward.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setView("bookshelf")}
+                  className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+                >
+                  Back to Bookshelf
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3">
+                  <p className="text-xs uppercase font-bold text-amber-700">XP</p>
+                  <p className="text-2xl font-display font-bold">{stats?.total_xp ?? 0}</p>
+                </div>
+                <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3">
+                  <p className="text-xs uppercase font-bold text-emerald-700">Coins</p>
+                  <p className="text-2xl font-display font-bold">{roomState?.coins ?? stats?.coins ?? 0}</p>
+                </div>
+                <div className="bg-sky-50 border-2 border-sky-200 rounded-xl p-3">
+                  <p className="text-xs uppercase font-bold text-sky-700">Next Milestone</p>
+                  <p className="text-2xl font-display font-bold">{stats?.next_milestone_xp ?? 500} XP</p>
+                </div>
+              </div>
+
+              <p className="text-sm text-slate-500 mb-5">
+                Your room is always visible around this screen. Buy and equip items here to update it instantly.
+              </p>
+
+              {roomError && <p className="text-sm text-rose-600 font-medium mb-3">{roomError}</p>}
+
+              <h3 className="font-bold text-lg mb-3">Room Shop</h3>
+              {roomState?.items?.length ? (
+                <div className="space-y-2">
+                  {roomState.items
+                    .slice()
+                    .sort((a, b) => a.min_xp - b.min_xp || a.cost_coins - b.cost_coins)
+                    .map((item) => {
+                      const notEnoughCoins = !item.owned && (roomState.coins ?? 0) < item.cost_coins;
+                      const disabled = roomBusyKey === item.key || !item.unlocked || notEnoughCoins;
+                      let buttonLabel = `Buy ${item.cost_coins} Coins`;
+                      let nextAction: "purchase" | "equip" | "unequip" = "purchase";
+
+                      if (!item.unlocked) {
+                        buttonLabel = `Unlock at ${item.min_xp} XP`;
+                      } else if (notEnoughCoins) {
+                        buttonLabel = `Need ${item.cost_coins} Coins`;
+                      } else if (item.owned && item.equipped) {
+                        buttonLabel = "Unequip";
+                        nextAction = "unequip";
+                      } else if (item.owned) {
+                        buttonLabel = "Equip";
+                        nextAction = "equip";
+                      }
+
+                      return (
+                        <div
+                          key={item.key}
+                          className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+                        >
+                          <div>
+                            <p className="font-bold text-slate-900">{item.name}</p>
+                            <p className="text-sm text-slate-600">{item.description}</p>
+                            <p className="text-xs font-semibold text-slate-500 mt-1">
+                              Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRoomAction(nextAction, item.key)}
+                            disabled={disabled}
+                            className={`px-3 py-2 rounded-xl border-2 text-sm font-bold ${
+                              item.owned && item.equipped
+                                ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+                                : "border-slate-300 bg-white text-slate-700"
+                            } disabled:opacity-50`}
+                          >
+                            {roomBusyKey === item.key ? "Saving..." : buttonLabel}
+                          </button>
+                        </div>
+                      );
+                    })}
+                </div>
+              ) : (
+                <p className="text-slate-500">No room items found.</p>
               )}
             </div>
           </motion.div>
@@ -1690,13 +2053,27 @@ export default function App() {
             </motion.div>
             
             <h2 className="text-3xl font-display font-bold mb-2">Quest Complete!</h2>
-            <p className="text-slate-500 mb-8">You earned some serious XP today!</p>
+            <p className="text-slate-500 mb-8">You earned XP and coins for your room upgrades!</p>
             
             <div className="bg-slate-50 rounded-2xl p-6 border-2 border-slate-100 mb-8 max-w-xs mx-auto">
               <div className="flex justify-between items-center mb-2">
                 <span className="font-bold text-slate-400 uppercase text-xs">XP Earned</span>
                 <span className="font-display font-bold text-2xl text-amber-600">+{earnedXp}</span>
               </div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="font-bold text-slate-400 uppercase text-xs">Coins Earned</span>
+                <span className="font-display font-bold text-2xl text-emerald-600">
+                  +{sessionRewardSummary?.coins_earned ?? 0}
+                </span>
+              </div>
+              {(sessionRewardSummary?.milestone_bonus_coins ?? 0) > 0 && (
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-bold text-slate-400 uppercase text-xs">Milestone Bonus</span>
+                  <span className="font-display font-bold text-xl text-sky-600">
+                    +{sessionRewardSummary?.milestone_bonus_coins ?? 0}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between items-center">
                 <span className="font-bold text-slate-400 uppercase text-xs">New Level</span>
                 <span className="font-display font-bold text-2xl text-emerald-600">{stats?.level}</span>
@@ -1709,6 +2086,7 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+      </main>
 
       {showAdminPrompt && (
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
@@ -1747,8 +2125,8 @@ export default function App() {
       )}
 
       {/* Footer Stats */}
-      {(view === "bookshelf" || view === "dashboard") && stats && (
-        <footer className="mt-12 grid grid-cols-3 gap-4">
+      {(view === "bookshelf" || view === "dashboard" || view === "room") && stats && (
+        <footer className={`${showRoomShell ? "mt-3" : "mt-12"} grid grid-cols-3 gap-4`}>
           <div className="text-center">
             <div className="bg-white p-3 rounded-2xl border-2 border-slate-900 mb-2 flex items-center justify-center">
               <BookIcon className="w-5 h-5 text-sky-500" />
@@ -1772,6 +2150,7 @@ export default function App() {
           </div>
         </footer>
       )}
+      </div>
     </div>
   );
 }

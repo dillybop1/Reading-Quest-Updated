@@ -3,6 +3,9 @@ import { query } from "./_db.js";
 import { resolveStudent } from "./_student.js";
 
 const XP_PER_LEVEL = 500;
+const XP_MILESTONE_STEP = 500;
+const COIN_DIVISOR = 10;
+const MILESTONE_BONUS_COINS = 75;
 const MAX_REFLECTION_LENGTH = 4000;
 
 const parseReflectionEntries = (questions: unknown, answers: unknown) => {
@@ -27,6 +30,23 @@ const parseReflectionEntries = (questions: unknown, answers: unknown) => {
   }
 
   return entries;
+};
+
+const getSessionCoinRewards = (previousXp: number, xpEarned: number) => {
+  const safePreviousXp = Math.max(0, Math.floor(previousXp || 0));
+  const safeXpEarned = Math.max(0, Math.floor(xpEarned || 0));
+
+  const baseCoins = Math.max(1, Math.floor(safeXpEarned / COIN_DIVISOR));
+  const milestonesCrossed =
+    Math.floor((safePreviousXp + safeXpEarned) / XP_MILESTONE_STEP) - Math.floor(safePreviousXp / XP_MILESTONE_STEP);
+  const milestoneCoins = Math.max(0, milestonesCrossed) * MILESTONE_BONUS_COINS;
+
+  return {
+    baseCoins,
+    milestoneCoins,
+    totalCoins: baseCoins + milestoneCoins,
+    milestonesCrossed: Math.max(0, milestonesCrossed),
+  };
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -104,21 +124,38 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         student.studentId,
       ]);
 
-      // Update user XP + level
-      const stats = await query(
-        "UPDATE user_stats SET total_xp = total_xp + $1 WHERE student_id = $2 RETURNING *",
-        [xp_earned, student.studentId]
+      const statsBefore = await query(
+        "SELECT total_xp, coins, total_coins_earned FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1",
+        [student.studentId]
       );
+      const previousXp = Number(statsBefore.rows[0]?.total_xp ?? 0);
+      const previousCoins = Number(statsBefore.rows[0]?.coins ?? 0);
+      const previousTotalCoinsEarned = Number(statsBefore.rows[0]?.total_coins_earned ?? 0);
+      const safeXpEarned = Math.max(0, Math.floor(Number(xp_earned)));
+      const coinRewards = getSessionCoinRewards(previousXp, safeXpEarned);
 
-      const totalXp = stats.rows[0]?.total_xp ?? 0;
+      const totalXp = previousXp + safeXpEarned;
       const newLevel = Math.floor(totalXp / XP_PER_LEVEL) + 1;
+      const newCoins = previousCoins + coinRewards.totalCoins;
+      const newTotalCoinsEarned = previousTotalCoinsEarned + coinRewards.totalCoins;
 
-      await query("UPDATE user_stats SET level = $1 WHERE student_id = $2", [newLevel, student.studentId]);
+      await query(
+        `
+          UPDATE user_stats
+          SET total_xp = $1, level = $2, coins = $3, total_coins_earned = $4
+          WHERE student_id = $5
+        `,
+        [totalXp, newLevel, newCoins, newTotalCoinsEarned, student.studentId]
+      );
 
       return res.status(200).json({
         session: session.rows[0],
         total_xp: totalXp,
         level: newLevel,
+        coins: newCoins,
+        coins_earned: coinRewards.totalCoins,
+        milestone_bonus_coins: coinRewards.milestoneCoins,
+        milestones_reached: coinRewards.milestonesCrossed,
       });
     }
 

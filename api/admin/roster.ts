@@ -30,6 +30,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           s.created_at,
           COALESCE(us.total_xp, 0)::int AS total_xp,
           COALESCE(us.level, 1)::int AS level,
+          COALESCE(us.coins, 0)::int AS coins,
+          COALESCE(us.total_coins_earned, 0)::int AS total_coins_earned,
           COALESCE(ss.total_sessions, 0)::int AS total_sessions,
           COALESCE(ss.total_minutes, 0)::int AS total_minutes,
           ab.title AS active_book,

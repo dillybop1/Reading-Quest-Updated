@@ -84,8 +84,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         if (Number.isFinite(studentId)) {
           await query(
             `
-              INSERT INTO user_stats (student_id, total_xp, level)
-              VALUES ($1, 0, 1)
+              INSERT INTO user_stats (student_id, total_xp, level, coins, total_coins_earned)
+              VALUES ($1, 0, 1, 0, 0)
               ON CONFLICT (student_id) DO NOTHING
             `,
             [studentId]
@@ -112,6 +112,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           WITH removed_reflections AS (
             DELETE FROM session_reflections WHERE student_id = $1 RETURNING 1
           ),
+          removed_room_items AS (
+            DELETE FROM student_room_items WHERE student_id = $1 RETURNING 1
+          ),
           removed_sessions AS (
             DELETE FROM sessions WHERE student_id = $1 RETURNING 1
           ),
@@ -127,6 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           SELECT
             (SELECT COUNT(*)::int FROM removed_student) AS deleted_students,
             (SELECT COUNT(*)::int FROM removed_reflections) AS deleted_reflections,
+            (SELECT COUNT(*)::int FROM removed_room_items) AS deleted_room_items,
             (SELECT COUNT(*)::int FROM removed_sessions) AS deleted_sessions,
             (SELECT COUNT(*)::int FROM removed_books) AS deleted_books,
             (SELECT COUNT(*)::int FROM removed_stats) AS deleted_stats
@@ -137,6 +141,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const result = deleted.rows[0] ?? {
         deleted_students: 0,
         deleted_reflections: 0,
+        deleted_room_items: 0,
         deleted_sessions: 0,
         deleted_books: 0,
         deleted_stats: 0,
