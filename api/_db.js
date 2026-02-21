@@ -1,9 +1,9 @@
-import { Pool } from "pg";
+import pg from "pg";
+const { Pool } = pg;
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 
-export const query = (text: string, params?: any[]) =>
-  pool.query(text, params);
+export const query = (text, params) => pool.query(text, params);
