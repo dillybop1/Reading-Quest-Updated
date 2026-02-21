@@ -7,15 +7,15 @@
 }
 
 body {
-  background-color: #f0f9ff;
+  background-color: #f6efe3;
   color: #1e293b;
 }
 
 .student-shell {
   background:
-    radial-gradient(900px 480px at -10% 0%, rgba(186, 230, 253, 0.55), transparent 60%),
-    radial-gradient(700px 420px at 110% 0%, rgba(254, 240, 138, 0.45), transparent 60%),
-    linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+    radial-gradient(900px 480px at -10% 0%, rgba(243, 222, 186, 0.5), transparent 60%),
+    radial-gradient(700px 420px at 110% 0%, rgba(236, 206, 171, 0.42), transparent 60%),
+    linear-gradient(180deg, #faf4ea 0%, #f2e7d6 100%);
   border-radius: 1.5rem;
 }
 
