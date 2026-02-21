@@ -53,3 +53,10 @@ export interface AdminRosterResponse {
   students: AdminStudentRow[];
   generated_at: string;
 }
+
+export interface AdminCreateStudentsResponse {
+  class_code: string;
+  created_count: number;
+  existing_count: number;
+  invalid_nicknames: string[];
+}

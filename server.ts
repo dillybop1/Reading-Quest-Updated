@@ -115,6 +115,24 @@ const getRequestField = (req: express.Request, key: string) => {
   return getStringValue((req.body ?? {})[key]);
 };
 
+const parseNicknames = (value: unknown) => {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === "string") {
+    return value
+      .split(/\r?\n|,/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
 const requireAdmin = (req: express.Request, res: express.Response) => {
   if (!ADMIN_ACCESS_CODE) {
     res.status(503).json({ error: "Admin access is not configured. Set ADMIN_ACCESS_CODE." });
@@ -381,6 +399,55 @@ async function startServer() {
       classes: classRows,
       students: studentRows,
       generated_at: new Date().toISOString(),
+    });
+  });
+
+  app.post("/api/admin/students", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+
+    const classCode = normalizeClassCode(req.body?.class_code);
+    const nicknames = parseNicknames(req.body?.nicknames);
+
+    if (!CLASS_CODE_REGEX.test(classCode)) {
+      return res.status(400).json({ error: "Invalid class_code format" });
+    }
+
+    if (nicknames.length === 0) {
+      return res.status(400).json({ error: "Provide at least one nickname" });
+    }
+
+    const uniqueNicknames = Array.from(new Set(nicknames));
+    const invalidNicknames = uniqueNicknames.filter((nickname) => !NICKNAME_REGEX.test(nickname));
+    const validNicknames = uniqueNicknames.filter((nickname) => NICKNAME_REGEX.test(nickname));
+
+    let createdCount = 0;
+    let existingCount = 0;
+
+    for (const nickname of validNicknames) {
+      const insertResult = db
+        .prepare("INSERT OR IGNORE INTO students (class_code, nickname) VALUES (?, ?)")
+        .run(classCode, nickname);
+
+      if (insertResult.changes > 0) {
+        createdCount += 1;
+      } else {
+        existingCount += 1;
+      }
+
+      const student = db
+        .prepare("SELECT id FROM students WHERE class_code = ? AND nickname = ? LIMIT 1")
+        .get(classCode, nickname) as { id?: number } | undefined;
+
+      if (student?.id) {
+        db.prepare("INSERT OR IGNORE INTO user_stats (student_id, total_xp, level) VALUES (?, 0, 1)").run(student.id);
+      }
+    }
+
+    return res.json({
+      class_code: classCode,
+      created_count: createdCount,
+      existing_count: existingCount,
+      invalid_nicknames: invalidNicknames,
     });
   });
 

@@ -11,6 +11,14 @@ body {
   color: #1e293b;
 }
 
+.student-shell {
+  background:
+    radial-gradient(900px 480px at -10% 0%, rgba(186, 230, 253, 0.55), transparent 60%),
+    radial-gradient(700px 420px at 110% 0%, rgba(254, 240, 138, 0.45), transparent 60%),
+    linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
+  border-radius: 1.5rem;
+}
+
 .quest-card {
   @apply bg-white rounded-3xl border-4 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] p-6;
 }

@@ -15,7 +15,14 @@ import {
   RefreshCw
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { Book, UserStats, ReadingSession, StudentIdentity, AdminRosterResponse } from "./types";
+import {
+  Book,
+  UserStats,
+  ReadingSession,
+  StudentIdentity,
+  AdminRosterResponse,
+  AdminCreateStudentsResponse,
+} from "./types";
 
 const STUDENT_STORAGE_KEY = "reading-quest-student";
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
@@ -33,6 +40,12 @@ export default function App() {
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminRoster, setAdminRoster] = useState<AdminRosterResponse | null>(null);
   const [isAdminLoading, setIsAdminLoading] = useState(false);
+  const [adminSection, setAdminSection] = useState<"roster" | "teacher">("roster");
+  const [teacherClassCodeInput, setTeacherClassCodeInput] = useState("");
+  const [teacherNicknamesInput, setTeacherNicknamesInput] = useState("");
+  const [teacherSetupError, setTeacherSetupError] = useState<string | null>(null);
+  const [teacherSetupResult, setTeacherSetupResult] = useState<AdminCreateStudentsResponse | null>(null);
+  const [isTeacherSetupSaving, setIsTeacherSetupSaving] = useState(false);
   const [adminTapCount, setAdminTapCount] = useState(0);
   const adminTapResetRef = useRef<NodeJS.Timeout | null>(null);
   const [adminAccessKey, setAdminAccessKey] = useState<string | null>(null);
@@ -117,6 +130,12 @@ export default function App() {
     return `${path}?${query}`;
   };
 
+  const openAdminPrompt = () => {
+    setShowAdminPrompt(true);
+    setAdminPasscode("");
+    setAdminError(null);
+  };
+
   const loadAdminRoster = async (key: string) => {
     setIsAdminLoading(true);
     setAdminError(null);
@@ -157,9 +176,7 @@ export default function App() {
     setAdminTapCount((prev) => {
       const next = prev + 1;
       if (next >= 5) {
-        setShowAdminPrompt(true);
-        setAdminPasscode("");
-        setAdminError(null);
+        openAdminPrompt();
         return 0;
       }
       return next;
@@ -182,6 +199,9 @@ export default function App() {
     if (!success) return;
 
     setShowAdminPrompt(false);
+    setAdminSection("roster");
+    setTeacherSetupError(null);
+    setTeacherSetupResult(null);
     setView("admin");
   };
 
@@ -191,6 +211,56 @@ export default function App() {
       return;
     }
     await loadAdminRoster(adminAccessKey);
+  };
+
+  const handleTeacherSetupSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+
+    if (!adminAccessKey) {
+      setTeacherSetupError("Admin session expired. Re-open admin mode.");
+      return;
+    }
+
+    const classCode = normalizeClassCode(teacherClassCodeInput);
+    if (!CLASS_CODE_REGEX.test(classCode)) {
+      setTeacherSetupError("Class code should be 2-20 letters, numbers, or dashes.");
+      return;
+    }
+
+    if (!teacherNicknamesInput.trim()) {
+      setTeacherSetupError("Enter one or more nicknames.");
+      return;
+    }
+
+    setTeacherSetupError(null);
+    setTeacherSetupResult(null);
+    setIsTeacherSetupSaving(true);
+
+    try {
+      const response = await fetch("/api/admin/students", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminAccessKey,
+        },
+        body: JSON.stringify({
+          class_code: classCode,
+          nicknames: teacherNicknamesInput,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Failed: ${response.status}`);
+      }
+
+      setTeacherSetupResult(data as AdminCreateStudentsResponse);
+      await loadAdminRoster(adminAccessKey);
+    } catch (err: any) {
+      setTeacherSetupError(String(err?.message ?? err));
+    } finally {
+      setIsTeacherSetupSaving(false);
+    }
   };
 
   const handleExitAdmin = () => {
@@ -318,6 +388,11 @@ export default function App() {
     setAdminError(null);
     setAdminRoster(null);
     setAdminAccessKey(null);
+    setAdminSection("roster");
+    setTeacherClassCodeInput("");
+    setTeacherNicknamesInput("");
+    setTeacherSetupError(null);
+    setTeacherSetupResult(null);
     setAdminTapCount(0);
     localStorage.removeItem(STUDENT_STORAGE_KEY);
     setStudent(null);
@@ -437,7 +512,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen p-4 md:p-8 max-w-2xl mx-auto">
+    <div className={`min-h-screen p-4 md:p-8 max-w-2xl mx-auto ${view === "student" ? "student-shell" : ""}`}>
       {/* Header / XP Bar */}
       {student && view !== "student" && view !== "admin" && (
         <header className="mb-8">
@@ -491,7 +566,18 @@ export default function App() {
             exit={{ opacity: 0, y: -20 }}
             className="quest-card"
           >
-            <h2 className="text-2xl font-bold mb-2">Who is reading today?</h2>
+            <div className="flex items-start justify-between mb-2">
+              <h2 className="text-2xl font-bold">Who is reading today?</h2>
+              <button
+                type="button"
+                onClick={openAdminPrompt}
+                className="p-2 rounded-xl border-2 border-slate-200 text-slate-300 hover:text-slate-400 hover:border-slate-300 transition-colors"
+                aria-label="Class tools"
+                title="Class tools"
+              >
+                <Shield className="w-4 h-4" />
+              </button>
+            </div>
             <p className="text-slate-500 mb-6">Enter your class code and nickname to load your own quest progress.</p>
 
             <form onSubmit={handleStudentSubmit} className="space-y-4">
@@ -537,9 +623,36 @@ export default function App() {
               <div className="flex flex-wrap gap-3 justify-between items-center mb-4">
                 <div className="flex items-center gap-2">
                   <Shield className="w-5 h-5 text-sky-600" />
-                  <h2 className="text-2xl font-bold">Admin Roster</h2>
+                  <h2 className="text-2xl font-bold">Admin Panel</h2>
                 </div>
                 <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAdminSection("roster")}
+                    className={`py-2 px-4 rounded-xl border-2 font-bold text-sm ${
+                      adminSection === "roster"
+                        ? "border-slate-900 bg-amber-200 text-slate-900"
+                        : "border-slate-200 bg-white text-slate-500"
+                    }`}
+                  >
+                    Roster
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAdminSection("teacher");
+                      if (!teacherClassCodeInput && student?.class_code) {
+                        setTeacherClassCodeInput(student.class_code);
+                      }
+                    }}
+                    className={`py-2 px-4 rounded-xl border-2 font-bold text-sm ${
+                      adminSection === "teacher"
+                        ? "border-slate-900 bg-sky-200 text-slate-900"
+                        : "border-slate-200 bg-white text-slate-500"
+                    }`}
+                  >
+                    Teacher Setup
+                  </button>
                   <button
                     type="button"
                     onClick={handleAdminRefresh}
@@ -567,62 +680,125 @@ export default function App() {
               )}
             </div>
 
-            <div className="quest-card">
-              <h3 className="font-bold text-lg mb-3">Class Codes</h3>
-              {adminRoster?.classes?.length ? (
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {adminRoster.classes.map((classRow) => (
-                    <div key={classRow.class_code} className="bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3">
-                      <p className="text-xs uppercase text-slate-400 font-bold">Class Code</p>
-                      <p className="font-bold text-lg">{classRow.class_code}</p>
-                      <p className="text-sm text-slate-500">{classRow.student_count} students</p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-slate-500">No class codes yet.</p>
-              )}
-            </div>
-
-            <div className="quest-card">
-              <h3 className="font-bold text-lg mb-3">Students</h3>
-              {adminRoster?.students?.length ? (
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-slate-500 uppercase text-xs">
-                        <th className="pb-2 pr-4">Class</th>
-                        <th className="pb-2 pr-4">Nickname</th>
-                        <th className="pb-2 pr-4">Level</th>
-                        <th className="pb-2 pr-4">XP</th>
-                        <th className="pb-2 pr-4">Quests</th>
-                        <th className="pb-2 pr-4">Hours</th>
-                        <th className="pb-2">Active Book</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {adminRoster.students.map((row) => (
-                        <tr key={row.id} className="border-t border-slate-200">
-                          <td className="py-2 pr-4 font-bold">{row.class_code}</td>
-                          <td className="py-2 pr-4">{row.nickname}</td>
-                          <td className="py-2 pr-4">{row.level}</td>
-                          <td className="py-2 pr-4">{row.total_xp}</td>
-                          <td className="py-2 pr-4">{row.total_sessions}</td>
-                          <td className="py-2 pr-4">{(row.total_minutes / 60).toFixed(1)}</td>
-                          <td className="py-2">
-                            {row.active_book
-                              ? `${row.active_book} (${row.current_page ?? 0}/${row.total_pages ?? 0})`
-                              : "No active book"}
-                          </td>
-                        </tr>
+            {adminSection === "roster" && (
+              <>
+                <div className="quest-card">
+                  <h3 className="font-bold text-lg mb-3">Class Codes</h3>
+                  {adminRoster?.classes?.length ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {adminRoster.classes.map((classRow) => (
+                        <div key={classRow.class_code} className="bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3">
+                          <p className="text-xs uppercase text-slate-400 font-bold">Class Code</p>
+                          <p className="font-bold text-lg">{classRow.class_code}</p>
+                          <p className="text-sm text-slate-500">{classRow.student_count} students</p>
+                        </div>
                       ))}
-                    </tbody>
-                  </table>
+                    </div>
+                  ) : (
+                    <p className="text-slate-500">No class codes yet.</p>
+                  )}
                 </div>
-              ) : (
-                <p className="text-slate-500">No students found.</p>
-              )}
-            </div>
+
+                <div className="quest-card">
+                  <h3 className="font-bold text-lg mb-3">Students</h3>
+                  {adminRoster?.students?.length ? (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="text-left text-slate-500 uppercase text-xs">
+                            <th className="pb-2 pr-4">Class</th>
+                            <th className="pb-2 pr-4">Nickname</th>
+                            <th className="pb-2 pr-4">Level</th>
+                            <th className="pb-2 pr-4">XP</th>
+                            <th className="pb-2 pr-4">Quests</th>
+                            <th className="pb-2 pr-4">Hours</th>
+                            <th className="pb-2">Active Book</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminRoster.students.map((row) => (
+                            <tr key={row.id} className="border-t border-slate-200">
+                              <td className="py-2 pr-4 font-bold">{row.class_code}</td>
+                              <td className="py-2 pr-4">{row.nickname}</td>
+                              <td className="py-2 pr-4">{row.level}</td>
+                              <td className="py-2 pr-4">{row.total_xp}</td>
+                              <td className="py-2 pr-4">{row.total_sessions}</td>
+                              <td className="py-2 pr-4">{(row.total_minutes / 60).toFixed(1)}</td>
+                              <td className="py-2">
+                                {row.active_book
+                                  ? `${row.active_book} (${row.current_page ?? 0}/${row.total_pages ?? 0})`
+                                  : "No active book"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <p className="text-slate-500">No students found.</p>
+                  )}
+                </div>
+              </>
+            )}
+
+            {adminSection === "teacher" && (
+              <div className="quest-card">
+                <h3 className="font-bold text-lg mb-2">Teacher Setup</h3>
+                <p className="text-slate-500 mb-4">
+                  Pre-create student logins for a class. Add one nickname per line.
+                </p>
+
+                <form onSubmit={handleTeacherSetupSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-bold mb-1">Class Code</label>
+                    <input
+                      value={teacherClassCodeInput}
+                      onChange={(e) => setTeacherClassCodeInput(e.target.value)}
+                      pattern="[A-Za-z0-9-]{2,20}"
+                      required
+                      className="quest-input"
+                      placeholder="e.g. 5A-READ"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-bold mb-1">Student Nicknames</label>
+                    <textarea
+                      value={teacherNicknamesInput}
+                      onChange={(e) => setTeacherNicknamesInput(e.target.value)}
+                      className="quest-input h-36 resize-none"
+                      placeholder={"Maya\nNoah\nAva"}
+                      required
+                    />
+                  </div>
+
+                  {teacherSetupError && <p className="text-sm text-rose-600 font-medium">{teacherSetupError}</p>}
+
+                  {teacherSetupResult && (
+                    <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3 text-sm">
+                      <p className="font-bold text-emerald-800">
+                        Saved for class {teacherSetupResult.class_code}
+                      </p>
+                      <p className="text-emerald-700">
+                        Created: {teacherSetupResult.created_count}, Existing: {teacherSetupResult.existing_count}
+                      </p>
+                      {teacherSetupResult.invalid_nicknames.length > 0 && (
+                        <p className="text-amber-700">
+                          Invalid ignored: {teacherSetupResult.invalid_nicknames.join(", ")}
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  <button
+                    type="submit"
+                    className="quest-button w-full flex items-center justify-center gap-2"
+                    disabled={isTeacherSetupSaving}
+                  >
+                    {isTeacherSetupSaving ? "Saving..." : "Create Student Logins"}
+                  </button>
+                </form>
+              </div>
+            )}
           </motion.div>
         )}
 
@@ -922,7 +1098,7 @@ export default function App() {
         <div className="fixed inset-0 bg-slate-900/50 flex items-center justify-center p-4 z-50">
           <div className="quest-card w-full max-w-md">
             <h3 className="text-xl font-bold mb-2">Admin Access</h3>
-            <p className="text-sm text-slate-500 mb-4">Enter password to open class roster.</p>
+            <p className="text-sm text-slate-500 mb-4">Enter password to open the admin panel.</p>
             <form onSubmit={handleAdminUnlockSubmit} className="space-y-4">
               <input
                 type="password"
