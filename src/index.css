@@ -55,12 +55,34 @@ body.dark-mode {
   margin-top: 0.5rem;
 }
 
+.bookshelf-wrap-bottom {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.bookshelf-stack-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-right: 0.18rem;
+}
+
 .bookshelf-stack {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.55rem;
   margin-bottom: 0.35rem;
+}
+
+.bookshelf-stack-bottom {
+  margin-top: auto;
 }
 
 .bookshelf-board {
@@ -224,20 +246,6 @@ body.dark-mode {
   max-width: 42rem;
   margin-left: auto;
   margin-right: auto;
-}
-
-.room-ui-scale-host {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-}
-
-.room-ui-scale-inner {
-  width: min(42rem, calc(100vw - 1.5rem));
-  transform-origin: top center;
-  will-change: transform;
 }
 
 /* Room asset slots: replace these CSS-drawn classes with image/SVG backgrounds later.
@@ -933,25 +941,22 @@ body.dark-mode {
 .room-item-sprite.is-editable {
   pointer-events: auto;
   cursor: grab;
-  outline: 2px dashed rgba(15, 23, 42, 0.5);
-  outline-offset: 2px;
 }
 
 .room-item-sprite.is-dragging {
   cursor: grabbing;
-  outline-color: rgba(245, 158, 11, 0.95);
   filter: drop-shadow(0 9px 10px rgba(15, 23, 42, 0.28));
 }
 
 .room-item-sprite-small-plant {
-  width: 70px;
-  height: 86px;
+  width: 49px;
+  height: 60px;
   background-image: url("/assets/room/small-plant.webp");
 }
 
 .room-item-sprite-cactus {
-  width: 96px;
-  height: 120px;
+  width: 67px;
+  height: 84px;
   background-image: url("/assets/room/cactus.webp");
 }
 
@@ -1010,8 +1015,8 @@ body.dark-mode {
 }
 
 .room-item-sprite-medium-potted-plant {
-  width: 138px;
-  height: 168px;
+  width: 97px;
+  height: 118px;
   background-image: url("/assets/room/medium-potted-plant.webp");
 }
 
@@ -1058,20 +1063,20 @@ body.dark-mode {
 }
 
 .room-item-sprite-blue-bed {
-  width: 258px;
-  height: 168px;
+  width: 297px;
+  height: 193px;
   background-image: url("/assets/room/blue-bed.webp");
 }
 
 .room-item-sprite-bookshelf-1 {
-  width: 168px;
-  height: 208px;
+  width: 218px;
+  height: 270px;
   background-image: url("/assets/room/bookshelf-1.webp");
 }
 
 .room-item-sprite-bookshelf-2 {
-  width: 170px;
-  height: 208px;
+  width: 221px;
+  height: 270px;
   background-image: url("/assets/room/bookshelf-2.webp");
 }
 
@@ -1088,14 +1093,14 @@ body.dark-mode {
 }
 
 .room-item-sprite-desk {
-  width: 240px;
-  height: 170px;
+  width: 312px;
+  height: 221px;
   background-image: url("/assets/room/desk.webp");
 }
 
 .room-item-sprite-hamper {
-  width: 116px;
-  height: 126px;
+  width: 81px;
+  height: 88px;
   background-image: url("/assets/room/hamper.webp");
 }
 
@@ -1112,38 +1117,38 @@ body.dark-mode {
 }
 
 .room-item-sprite-pink-bed {
-  width: 258px;
-  height: 168px;
+  width: 297px;
+  height: 193px;
   background-image: url("/assets/room/pink-bed.webp");
 }
 
 .room-item-sprite-radio {
-  width: 108px;
-  height: 88px;
+  width: 65px;
+  height: 53px;
   background-image: url("/assets/room/radio.webp");
 }
 
 .room-item-sprite-rectangle-windows {
-  width: 208px;
-  height: 128px;
+  width: 250px;
+  height: 154px;
   background-image: url("/assets/room/rectangle-windows.webp");
 }
 
 .room-item-sprite-rounded-window {
-  width: 144px;
-  height: 132px;
+  width: 173px;
+  height: 158px;
   background-image: url("/assets/room/rounded-window.webp");
 }
 
 .room-item-sprite-slippers {
-  width: 98px;
-  height: 70px;
+  width: 78px;
+  height: 56px;
   background-image: url("/assets/room/slippers.webp");
 }
 
 .room-item-sprite-small-plant-2 {
-  width: 76px;
-  height: 150px;
+  width: 53px;
+  height: 105px;
   background-image: url("/assets/room/small-plant-2.webp");
 }
 
@@ -1189,7 +1194,7 @@ body.dark-mode {
 }
 
 .theme-dark .room-item-sprite.is-editable {
-  outline-color: rgba(148, 163, 184, 0.8);
+  filter: brightness(0.92) saturate(0.92) drop-shadow(0 5px 6px rgba(2, 6, 23, 0.45));
 }
 
 @media (max-width: 640px) {
@@ -1203,13 +1208,13 @@ body.dark-mode {
   }
 
   .room-item-sprite-small-plant {
-    width: 52px;
-    height: 66px;
+    width: 36px;
+    height: 46px;
   }
 
   .room-item-sprite-cactus {
-    width: 72px;
-    height: 90px;
+    width: 50px;
+    height: 63px;
   }
 
   .room-item-sprite-small-blue-picture,
@@ -1246,8 +1251,8 @@ body.dark-mode {
   }
 
   .room-item-sprite-medium-potted-plant {
-    width: 100px;
-    height: 124px;
+    width: 70px;
+    height: 87px;
   }
 
   .room-item-sprite-potion-rack,
@@ -1283,14 +1288,14 @@ body.dark-mode {
 
   .room-item-sprite-blue-bed,
   .room-item-sprite-pink-bed {
-    width: 176px;
-    height: 116px;
+    width: 202px;
+    height: 133px;
   }
 
   .room-item-sprite-bookshelf-1,
   .room-item-sprite-bookshelf-2 {
-    width: 122px;
-    height: 150px;
+    width: 159px;
+    height: 195px;
   }
 
   .room-item-sprite-circle-mirror {
@@ -1304,13 +1309,13 @@ body.dark-mode {
   }
 
   .room-item-sprite-desk {
-    width: 168px;
-    height: 120px;
+    width: 218px;
+    height: 156px;
   }
 
   .room-item-sprite-hamper {
-    width: 82px;
-    height: 90px;
+    width: 57px;
+    height: 63px;
   }
 
   .room-item-sprite-floor-lamp {
@@ -1324,28 +1329,28 @@ body.dark-mode {
   }
 
   .room-item-sprite-radio {
-    width: 76px;
-    height: 62px;
+    width: 46px;
+    height: 37px;
   }
 
   .room-item-sprite-rectangle-windows {
-    width: 146px;
-    height: 90px;
+    width: 175px;
+    height: 108px;
   }
 
   .room-item-sprite-rounded-window {
-    width: 102px;
-    height: 94px;
+    width: 122px;
+    height: 113px;
   }
 
   .room-item-sprite-slippers {
-    width: 70px;
-    height: 50px;
+    width: 56px;
+    height: 40px;
   }
 
   .room-item-sprite-small-plant-2 {
-    width: 56px;
-    height: 112px;
+    width: 39px;
+    height: 78px;
   }
 }
 

@@ -23,7 +23,7 @@ const ROOM_ITEM_CATALOG: RoomItemDefinition[] = [
     name: "Small Plant",
     description: "A tiny green plant for your desk corner.",
     category: "small_plant",
-    cost_coins: 20,
+    cost_coins: 0,
     min_xp: 0,
   },
   {
@@ -39,16 +39,16 @@ const ROOM_ITEM_CATALOG: RoomItemDefinition[] = [
     name: "Blue Picture",
     description: "A framed blue scene for your wall.",
     category: "small_blue_picture",
-    cost_coins: 45,
-    min_xp: 100,
+    cost_coins: 0,
+    min_xp: 0,
   },
   {
     key: "small_yellow_picture",
     name: "Yellow Picture",
     description: "A warm framed picture to brighten the room.",
     category: "small_yellow_picture",
-    cost_coins: 45,
-    min_xp: 140,
+    cost_coins: 0,
+    min_xp: 0,
   },
   {
     key: "wall_clock",
@@ -95,8 +95,8 @@ const ROOM_ITEM_CATALOG: RoomItemDefinition[] = [
     name: "Desk Lamp",
     description: "A reading lamp for late-night quests.",
     category: "desk_lamp",
-    cost_coins: 120,
-    min_xp: 520,
+    cost_coins: 0,
+    min_xp: 0,
   },
   {
     key: "hanging_lamp",
@@ -307,7 +307,87 @@ const parseRoomZIndex = (value: unknown) => {
   return clamp(parsed, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX);
 };
 
+type StarterRoomItemLayout = {
+  key: string;
+  pos_x: number;
+  pos_y: number;
+  z_index: number;
+};
+
+const STARTER_ROOM_LAYOUT: StarterRoomItemLayout[] = [
+  { key: "bookshelf_2", pos_x: 12, pos_y: 67, z_index: 16 },
+  { key: "small_plant", pos_x: 8, pos_y: 41, z_index: 29 },
+  { key: "desk", pos_x: 27, pos_y: 76, z_index: 16 },
+  { key: "desk_lamp", pos_x: 24, pos_y: 66, z_index: 30 },
+  { key: "small_blue_picture", pos_x: 75, pos_y: 31, z_index: 21 },
+  { key: "small_yellow_picture", pos_x: 90, pos_y: 37, z_index: 21 },
+  { key: "rectangle_windows", pos_x: 83, pos_y: 47, z_index: 20 },
+  { key: "colorful_end_table", pos_x: 74, pos_y: 75, z_index: 18 },
+  { key: "radio", pos_x: 72, pos_y: 66, z_index: 28 },
+  { key: "small_plant_2", pos_x: 78, pos_y: 66, z_index: 28 },
+  { key: "blue_bed", pos_x: 84, pos_y: 79, z_index: 15 },
+  { key: "slippers", pos_x: 86, pos_y: 91, z_index: 27 },
+  { key: "floor_lamp", pos_x: 93, pos_y: 71, z_index: 19 },
+  { key: "hamper", pos_x: 98, pos_y: 78, z_index: 17 },
+];
+
+const STARTER_ROOM_ITEM_KEYS = STARTER_ROOM_LAYOUT.map((entry) => entry.key);
+
+const ensureStarterRoomItems = async (studentId: number) => {
+  const [ownedResult, ownedStarterResult] = await Promise.all([
+    query("SELECT COUNT(*)::int AS count FROM student_room_items WHERE student_id = $1", [studentId]),
+    query(
+      `
+        SELECT item_key
+        FROM student_room_items
+        WHERE student_id = $1
+          AND item_key = ANY($2::text[])
+      `,
+      [studentId, STARTER_ROOM_ITEM_KEYS]
+    ),
+  ]);
+
+  const ownedCount = Number(ownedResult.rows[0]?.count ?? 0);
+  const ownedStarterKeys = new Set<string>(
+    ownedStarterResult.rows
+      .map((row) => (typeof row.item_key === "string" ? row.item_key : ""))
+      .filter(Boolean)
+  );
+
+  if (ownedStarterKeys.size === STARTER_ROOM_ITEM_KEYS.length) return;
+
+  if (ownedCount === 0) {
+    for (const starter of STARTER_ROOM_LAYOUT) {
+      await query(
+        `
+          INSERT INTO student_room_items (student_id, item_key, is_equipped, pos_x, pos_y, z_index)
+          VALUES ($1, $2, true, $3, $4, $5)
+          ON CONFLICT (student_id, item_key) DO NOTHING
+        `,
+        [studentId, starter.key, starter.pos_x, starter.pos_y, starter.z_index]
+      );
+    }
+    return;
+  }
+
+  const missingStarterKeys = STARTER_ROOM_ITEM_KEYS.filter((key) => !ownedStarterKeys.has(key));
+  await Promise.all(
+    missingStarterKeys.map((itemKey) =>
+      query(
+        `
+          INSERT INTO student_room_items (student_id, item_key, is_equipped)
+          VALUES ($1, $2, false)
+          ON CONFLICT (student_id, item_key) DO NOTHING
+        `,
+        [studentId, itemKey]
+      )
+    )
+  );
+};
+
 const buildRoomState = async (studentId: number) => {
+  await ensureStarterRoomItems(studentId);
+
   const [statsResult, ownedResult] = await Promise.all([
     query("SELECT total_xp, coins FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1", [studentId]),
     query(

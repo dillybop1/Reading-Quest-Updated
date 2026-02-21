@@ -36,7 +36,7 @@ const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
 const BOOK_SPINE_COLORS = ["#f59e0b", "#0ea5e9", "#22c55e", "#ef4444", "#14b8a6", "#f97316"];
 const BOOKSHELF_PAGE_SIZE = 5;
-const ROOM_SHOP_PAGE_SIZE = 1;
+const ROOM_SHOP_PAGE_SIZE = 6;
 const ROOM_POSITION_MIN = 2;
 const ROOM_POSITION_MAX = 98;
 const ROOM_Z_INDEX_MIN = 1;
@@ -56,18 +56,83 @@ type RoomLayoutSnapshot = Record<
     z_index: number | null;
   }
 >;
+type RoomShopCategoryId =
+  | "all"
+  | "beds"
+  | "seating"
+  | "desks"
+  | "tables"
+  | "windows"
+  | "lighting"
+  | "plants"
+  | "decor"
+  | "bookshelves"
+  | "misc";
+
+const ROOM_SHOP_CATEGORIES: Array<{ id: RoomShopCategoryId; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "beds", label: "Beds" },
+  { id: "seating", label: "Seating" },
+  { id: "desks", label: "Desks" },
+  { id: "tables", label: "Tables" },
+  { id: "windows", label: "Windows" },
+  { id: "lighting", label: "Lighting" },
+  { id: "plants", label: "Plants" },
+  { id: "decor", label: "Decorations" },
+  { id: "bookshelves", label: "Bookshelves" },
+  { id: "misc", label: "Misc" },
+];
+
+const ROOM_SHOP_CATEGORY_BY_ITEM_KEY: Record<string, RoomShopCategoryId> = {
+  blue_bed: "beds",
+  pink_bed: "beds",
+  bean_bag: "beds",
+  blue_chair: "seating",
+  green_couch: "seating",
+  tree_hammock: "seating",
+  desk: "desks",
+  small_blue_sidetable: "desks",
+  side_table: "tables",
+  small_table: "tables",
+  colorful_end_table: "tables",
+  rectangle_windows: "windows",
+  rounded_window: "windows",
+  circle_mirror: "windows",
+  desk_lamp: "lighting",
+  floor_lamp: "lighting",
+  hanging_lamp: "lighting",
+  small_plant: "plants",
+  small_plant_2: "plants",
+  cactus: "plants",
+  medium_potted_plant: "plants",
+  small_blue_picture: "decor",
+  small_yellow_picture: "decor",
+  multi_pictures: "decor",
+  wall_clock: "decor",
+  potion_rack: "decor",
+  wizard_globe: "decor",
+  baby_dragon: "decor",
+  radio: "decor",
+  alarm_clock: "decor",
+  hamper: "misc",
+  slippers: "misc",
+  bookshelf_1: "bookshelves",
+  bookshelf_2: "bookshelves",
+};
+
+const ROOM_SHOP_CATEGORY_ORDER = new Map(ROOM_SHOP_CATEGORIES.map((category, index) => [category.id, index]));
 
 const ROOM_SPRITE_CONFIG: Record<string, RoomSpriteConfig> = {
-  small_plant: { className: "room-item-sprite-small-plant", defaultX: 23, defaultY: 80, defaultZ: 27 },
+  small_plant: { className: "room-item-sprite-small-plant", defaultX: 8, defaultY: 41, defaultZ: 29 },
   cactus: { className: "room-item-sprite-cactus", defaultX: 30, defaultY: 84, defaultZ: 25 },
-  small_blue_picture: { className: "room-item-sprite-small-blue-picture", defaultX: 26, defaultY: 23, defaultZ: 19 },
-  small_yellow_picture: { className: "room-item-sprite-small-yellow-picture", defaultX: 76, defaultY: 24, defaultZ: 19 },
+  small_blue_picture: { className: "room-item-sprite-small-blue-picture", defaultX: 75, defaultY: 31, defaultZ: 21 },
+  small_yellow_picture: { className: "room-item-sprite-small-yellow-picture", defaultX: 90, defaultY: 37, defaultZ: 21 },
   wall_clock: { className: "room-item-sprite-wall-clock", defaultX: 50, defaultY: 13, defaultZ: 20 },
   blue_chair: { className: "room-item-sprite-blue-chair", defaultX: 17, defaultY: 85, defaultZ: 18 },
   side_table: { className: "room-item-sprite-side-table", defaultX: 23, defaultY: 90, defaultZ: 16 },
   small_table: { className: "room-item-sprite-small-table", defaultX: 58, defaultY: 90, defaultZ: 15 },
   small_blue_sidetable: { className: "room-item-sprite-small-blue-sidetable", defaultX: 39, defaultY: 89, defaultZ: 16 },
-  desk_lamp: { className: "room-item-sprite-desk-lamp", defaultX: 12, defaultY: 76, defaultZ: 29 },
+  desk_lamp: { className: "room-item-sprite-desk-lamp", defaultX: 24, defaultY: 66, defaultZ: 30 },
   hanging_lamp: { className: "room-item-sprite-hanging-lamp", defaultX: 66, defaultY: 19, defaultZ: 30 },
   medium_potted_plant: { className: "room-item-sprite-medium-potted-plant", defaultX: 86, defaultY: 84, defaultZ: 22 },
   potion_rack: { className: "room-item-sprite-potion-rack", defaultX: 88, defaultY: 70, defaultZ: 24 },
@@ -77,21 +142,21 @@ const ROOM_SPRITE_CONFIG: Record<string, RoomSpriteConfig> = {
   tree_hammock: { className: "room-item-sprite-tree-hammock", defaultX: 49, defaultY: 64, defaultZ: 14 },
   alarm_clock: { className: "room-item-sprite-alarm-clock", defaultX: 40, defaultY: 73, defaultZ: 28 },
   bean_bag: { className: "room-item-sprite-bean-bag", defaultX: 78, defaultY: 88, defaultZ: 18 },
-  blue_bed: { className: "room-item-sprite-blue-bed", defaultX: 85, defaultY: 84, defaultZ: 13 },
+  blue_bed: { className: "room-item-sprite-blue-bed", defaultX: 84, defaultY: 79, defaultZ: 15 },
   bookshelf_1: { className: "room-item-sprite-bookshelf-1", defaultX: 8, defaultY: 66, defaultZ: 16 },
-  bookshelf_2: { className: "room-item-sprite-bookshelf-2", defaultX: 94, defaultY: 66, defaultZ: 16 },
+  bookshelf_2: { className: "room-item-sprite-bookshelf-2", defaultX: 12, defaultY: 67, defaultZ: 16 },
   circle_mirror: { className: "room-item-sprite-circle-mirror", defaultX: 77, defaultY: 16, defaultZ: 21 },
-  colorful_end_table: { className: "room-item-sprite-colorful-end-table", defaultX: 55, defaultY: 89, defaultZ: 18 },
-  desk: { className: "room-item-sprite-desk", defaultX: 20, defaultY: 82, defaultZ: 17 },
-  hamper: { className: "room-item-sprite-hamper", defaultX: 10, defaultY: 89, defaultZ: 14 },
-  floor_lamp: { className: "room-item-sprite-floor-lamp", defaultX: 31, defaultY: 74, defaultZ: 24 },
+  colorful_end_table: { className: "room-item-sprite-colorful-end-table", defaultX: 74, defaultY: 75, defaultZ: 18 },
+  desk: { className: "room-item-sprite-desk", defaultX: 27, defaultY: 76, defaultZ: 16 },
+  hamper: { className: "room-item-sprite-hamper", defaultX: 98, defaultY: 78, defaultZ: 17 },
+  floor_lamp: { className: "room-item-sprite-floor-lamp", defaultX: 93, defaultY: 71, defaultZ: 19 },
   multi_pictures: { className: "room-item-sprite-multi-pictures", defaultX: 55, defaultY: 21, defaultZ: 21 },
   pink_bed: { className: "room-item-sprite-pink-bed", defaultX: 84, defaultY: 84, defaultZ: 13 },
-  radio: { className: "room-item-sprite-radio", defaultX: 43, defaultY: 77, defaultZ: 29 },
-  rectangle_windows: { className: "room-item-sprite-rectangle-windows", defaultX: 49, defaultY: 17, defaultZ: 20 },
+  radio: { className: "room-item-sprite-radio", defaultX: 72, defaultY: 66, defaultZ: 28 },
+  rectangle_windows: { className: "room-item-sprite-rectangle-windows", defaultX: 83, defaultY: 47, defaultZ: 20 },
   rounded_window: { className: "room-item-sprite-rounded-window", defaultX: 24, defaultY: 17, defaultZ: 20 },
-  slippers: { className: "room-item-sprite-slippers", defaultX: 71, defaultY: 93, defaultZ: 27 },
-  small_plant_2: { className: "room-item-sprite-small-plant-2", defaultX: 26, defaultY: 82, defaultZ: 27 },
+  slippers: { className: "room-item-sprite-slippers", defaultX: 86, defaultY: 91, defaultZ: 27 },
+  small_plant_2: { className: "room-item-sprite-small-plant-2", defaultX: 78, defaultY: 66, defaultZ: 28 },
 };
 
 const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -128,6 +193,9 @@ const getRoomSpriteLayout = (item: Pick<RoomItemState, "key" | "pos_x" | "pos_y"
     z: clampNumber(z, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX),
   };
 };
+
+const getRoomShopCategory = (itemKey: string): RoomShopCategoryId =>
+  ROOM_SHOP_CATEGORY_BY_ITEM_KEY[itemKey] ?? "misc";
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -167,6 +235,8 @@ export default function App() {
     | "setup"
     | "bookshelf"
     | "room"
+    | "roomView"
+    | "roomShop"
     | "dashboard"
     | "reading"
     | "summary"
@@ -205,11 +275,9 @@ export default function App() {
   } | null>(null);
   const [bookshelfPage, setBookshelfPage] = useState(1);
   const [roomShopPage, setRoomShopPage] = useState(1);
+  const [roomShopCategory, setRoomShopCategory] = useState<RoomShopCategoryId>("all");
   const roomFrameRef = useRef<HTMLDivElement | null>(null);
   const roomStateRef = useRef<RoomStateResponse | null>(null);
-  const roomUiScaleHostRef = useRef<HTMLDivElement | null>(null);
-  const roomUiScaleInnerRef = useRef<HTMLDivElement | null>(null);
-  const [roomUiScale, setRoomUiScale] = useState(1);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
@@ -266,11 +334,15 @@ export default function App() {
   }, [roomState]);
 
   useEffect(() => {
-    if (view !== "room") {
+    if (view !== "roomView") {
       setIsRoomCustomizeMode(false);
       setRoomDragState(null);
       setRoomCustomizeSnapshot(null);
+    }
+
+    if (view !== "roomShop") {
       setRoomShopPage(1);
+      setRoomShopCategory("all");
     }
 
     if (view !== "bookshelf") {
@@ -413,15 +485,39 @@ export default function App() {
     if (!roomState?.items?.length) return [];
     return roomState.items
       .slice()
-      .sort((a, b) => a.min_xp - b.min_xp || a.cost_coins - b.cost_coins);
+      .sort((a, b) => {
+        const categoryRankA = ROOM_SHOP_CATEGORY_ORDER.get(getRoomShopCategory(a.key)) ?? Number.MAX_SAFE_INTEGER;
+        const categoryRankB = ROOM_SHOP_CATEGORY_ORDER.get(getRoomShopCategory(b.key)) ?? Number.MAX_SAFE_INTEGER;
+        return categoryRankA - categoryRankB || a.min_xp - b.min_xp || a.cost_coins - b.cost_coins;
+      });
   }, [roomState]);
+
+  const roomShopCategoryCounts = useMemo(() => {
+    const initialCounts = ROOM_SHOP_CATEGORIES.reduce((acc, category) => {
+      acc[category.id] = 0;
+      return acc;
+    }, {} as Record<RoomShopCategoryId, number>);
+
+    for (const item of sortedRoomShopItems) {
+      const category = getRoomShopCategory(item.key);
+      initialCounts[category] = (initialCounts[category] ?? 0) + 1;
+    }
+
+    initialCounts.all = sortedRoomShopItems.length;
+    return initialCounts;
+  }, [sortedRoomShopItems]);
+
+  const filteredRoomShopItems = useMemo(() => {
+    if (roomShopCategory === "all") return sortedRoomShopItems;
+    return sortedRoomShopItems.filter((item) => getRoomShopCategory(item.key) === roomShopCategory);
+  }, [sortedRoomShopItems, roomShopCategory]);
 
   const pagedRoomShopItems = useMemo(() => {
     const startIndex = (roomShopPage - 1) * ROOM_SHOP_PAGE_SIZE;
-    return sortedRoomShopItems.slice(startIndex, startIndex + ROOM_SHOP_PAGE_SIZE);
-  }, [sortedRoomShopItems, roomShopPage]);
+    return filteredRoomShopItems.slice(startIndex, startIndex + ROOM_SHOP_PAGE_SIZE);
+  }, [filteredRoomShopItems, roomShopPage]);
 
-  const roomShopTotalPages = Math.max(1, Math.ceil(sortedRoomShopItems.length / ROOM_SHOP_PAGE_SIZE));
+  const roomShopTotalPages = Math.max(1, Math.ceil(filteredRoomShopItems.length / ROOM_SHOP_PAGE_SIZE));
 
   const hasPositionableEquippedRoomItems = equippedRoomSprites.length > 0;
 
@@ -448,6 +544,10 @@ export default function App() {
   useEffect(() => {
     setRoomShopPage((prev) => Math.min(prev, roomShopTotalPages));
   }, [roomShopTotalPages]);
+
+  useEffect(() => {
+    setRoomShopPage(1);
+  }, [roomShopCategory]);
 
   const normalizeClassCode = (value: string) => value.trim().toUpperCase();
   const normalizeNickname = (value: string) => value.trim();
@@ -724,7 +824,7 @@ export default function App() {
   };
 
   const handleRoomItemPointerDown = (event: React.PointerEvent<HTMLDivElement>, itemKey: string) => {
-    if (!isRoomCustomizeMode || view !== "room" || event.button !== 0) return;
+    if (!isRoomCustomizeMode || view !== "roomView" || event.button !== 0) return;
 
     const frameRect = roomFrameRef.current?.getBoundingClientRect();
     const currentState = roomStateRef.current;
@@ -755,7 +855,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!roomDragState || !isRoomCustomizeMode || view !== "room") return;
+    if (!roomDragState || !isRoomCustomizeMode || view !== "roomView") return;
 
     const handlePointerMove = (event: PointerEvent) => {
       const frameRect = roomFrameRef.current?.getBoundingClientRect();
@@ -1367,16 +1467,24 @@ export default function App() {
   };
 
   const showRoomShell = Boolean(student) && view !== "student" && view !== "admin" && view !== "loading";
-  const canEditRoomLayout = isRoomCustomizeMode && view === "room";
-  const showAppChrome = !canEditRoomLayout;
-  const shouldScaleRoomContent = showRoomShell && showAppChrome;
+  const canEditRoomLayout = isRoomCustomizeMode && view === "roomView";
+  const isRoomViewImmersive = view === "roomView" && !isRoomCustomizeMode;
+  const showAppChrome = !canEditRoomLayout && !isRoomViewImmersive;
+  const roomMenuCardClass = showRoomShell
+    ? "quest-card flex flex-col room-tab-frame h-[68vh] min-h-[32rem] max-h-[68vh]"
+    : "quest-card";
+  const bookshelfMenuCardClass = showRoomShell
+    ? "quest-card flex flex-col room-tab-frame h-[54vh] min-h-[22rem] max-h-[54vh]"
+    : "quest-card";
+  const roomMenuBodyClass = showRoomShell ? "flex-1 min-h-0 room-shop-scroll pr-1" : "";
+  const bookshelfMenuBodyClass = showRoomShell ? "flex-1 min-h-0 flex flex-col" : "";
   const appShellClassName = showRoomShell
     ? "min-h-screen h-[100dvh] w-full room-shell-active overflow-hidden"
     : "min-h-screen p-4 md:p-8 max-w-2xl mx-auto";
   const contentShellClassName = showRoomShell
-    ? canEditRoomLayout
+    ? canEditRoomLayout || isRoomViewImmersive
       ? "room-content-layer h-full pointer-events-none"
-      : "room-content-layer p-3 md:p-4 h-full"
+      : "room-content-layer room-content-fit p-3 md:p-4 h-full"
     : "";
   const mainAreaClassName = showRoomShell ? "flex-1 min-h-0" : "";
   const showFooterStats = Boolean(
@@ -1384,55 +1492,9 @@ export default function App() {
       (view === "dashboard" || (view === "bookshelf" && !showAddBookForm)) &&
       showAppChrome
   );
-
-  useEffect(() => {
-    if (!shouldScaleRoomContent) {
-      setRoomUiScale(1);
-      return;
-    }
-
-    const hostEl = roomUiScaleHostRef.current;
-    const innerEl = roomUiScaleInnerRef.current;
-    if (!hostEl || !innerEl) {
-      setRoomUiScale(1);
-      return;
-    }
-
-    let frameId = 0;
-    const measure = () => {
-      const hostWidth = hostEl.clientWidth;
-      const hostHeight = hostEl.clientHeight;
-      const contentWidth = innerEl.scrollWidth;
-      const contentHeight = innerEl.scrollHeight;
-
-      if (!hostWidth || !hostHeight || !contentWidth || !contentHeight) return;
-
-      const horizontalPadding = 10;
-      const verticalPadding = 8;
-      const scaleByWidth = (hostWidth - horizontalPadding) / contentWidth;
-      const scaleByHeight = (hostHeight - verticalPadding) / contentHeight;
-      const nextScale = clampNumber(Math.min(scaleByWidth, scaleByHeight), 0.62, 1.38);
-
-      setRoomUiScale((prev) => (Math.abs(prev - nextScale) > 0.01 ? nextScale : prev));
-    };
-
-    const scheduleMeasure = () => {
-      if (frameId) cancelAnimationFrame(frameId);
-      frameId = window.requestAnimationFrame(measure);
-    };
-
-    scheduleMeasure();
-    const observer = new ResizeObserver(scheduleMeasure);
-    observer.observe(hostEl);
-    observer.observe(innerEl);
-    window.addEventListener("resize", scheduleMeasure);
-
-    return () => {
-      if (frameId) cancelAnimationFrame(frameId);
-      observer.disconnect();
-      window.removeEventListener("resize", scheduleMeasure);
-    };
-  }, [shouldScaleRoomContent, showFooterStats, showAddBookForm, view]);
+  const roomOwnedCount = roomState?.items.filter((item) => item.owned).length ?? 0;
+  const roomEquippedCount = roomState?.items.filter((item) => item.equipped).length ?? 0;
+  const roomUnlockedCount = roomState?.items.filter((item) => item.unlocked).length ?? 0;
 
   if (view === "loading") {
     return (
@@ -1536,16 +1598,34 @@ export default function App() {
         </div>
       )}
 
+      {isRoomViewImmersive && (
+        <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 rounded-2xl border-2 border-slate-900 bg-white/95 px-3 py-2 shadow-lg pointer-events-auto">
+          <button
+            type="button"
+            onClick={() => setView("room")}
+            className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50"
+          >
+            Back
+          </button>
+          <button
+            type="button"
+            onClick={handleStartRoomCustomization}
+            disabled={!hasPositionableEquippedRoomItems || Boolean(roomLayoutSavingKey)}
+            className="py-2 px-4 rounded-xl border-2 border-amber-300 bg-amber-100 text-amber-800 font-bold disabled:opacity-50"
+          >
+            Customize Room
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("roomShop")}
+            className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-700 font-bold hover:bg-slate-50"
+          >
+            Room Shop
+          </button>
+        </div>
+      )}
+
       {showAppChrome && (
-      <div
-        ref={shouldScaleRoomContent ? roomUiScaleHostRef : undefined}
-        className={shouldScaleRoomContent ? "room-ui-scale-host" : ""}
-      >
-      <div
-        ref={shouldScaleRoomContent ? roomUiScaleInnerRef : undefined}
-        className={shouldScaleRoomContent ? "room-ui-scale-inner room-content-fit" : ""}
-        style={shouldScaleRoomContent ? { transform: `scale(${roomUiScale})` } : undefined}
-      >
       <>
       {/* Header / XP Bar */}
       {student && view !== "student" && view !== "admin" && (
@@ -2067,12 +2147,12 @@ export default function App() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="quest-card"
+            className={roomMenuCardClass}
           >
             <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
               <Plus className="text-amber-500" /> Add Your First Book to Your Bookshelf!
             </h2>
-            <form onSubmit={handleNewBook} className="space-y-4">
+            <form onSubmit={handleNewBook} className={`space-y-4 ${roomMenuBodyClass}`}>
               <div>
                 <label className="block text-sm font-bold mb-1">Book Title</label>
                 <input name="title" required className="quest-input" placeholder="e.g. Harry Potter" />
@@ -2100,7 +2180,7 @@ export default function App() {
             exit={{ opacity: 0, y: -20 }}
             className="space-y-6"
           >
-            <div className="quest-card">
+            <div className={bookshelfMenuCardClass}>
               <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
                 <div>
                   <h2 className="text-2xl font-bold">My Bookshelf</h2>
@@ -2130,6 +2210,7 @@ export default function App() {
                 </div>
               </div>
 
+              <div className={bookshelfMenuBodyClass}>
               {showAddBookForm && (
                 <form onSubmit={handleNewBook} className="space-y-3 mb-5 p-4 rounded-2xl border-2 border-slate-200 bg-slate-50">
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -2144,8 +2225,32 @@ export default function App() {
               )}
 
               {books.length > 0 ? (
-                <div className="bookshelf-wrap">
-                  <div className="bookshelf-stack">
+                <div className="bookshelf-wrap bookshelf-wrap-bottom">
+                  {bookshelfTotalPages > 1 && (
+                    <div className="mb-2 flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBookshelfPage((prev) => Math.max(1, prev - 1))}
+                        disabled={bookshelfPage === 1}
+                        className="px-3 py-1 rounded-lg border-2 border-slate-200 text-xs font-bold text-slate-600 disabled:opacity-40"
+                      >
+                        Prev
+                      </button>
+                      <p className="text-xs font-bold text-slate-500">
+                        Shelf Page {bookshelfPage} / {bookshelfTotalPages}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setBookshelfPage((prev) => Math.min(bookshelfTotalPages, prev + 1))}
+                        disabled={bookshelfPage === bookshelfTotalPages}
+                        className="px-3 py-1 rounded-lg border-2 border-slate-200 text-xs font-bold text-slate-600 disabled:opacity-40"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
+                  <div className="bookshelf-stack-scroll room-shop-scroll">
+                  <div className="bookshelf-stack bookshelf-stack-bottom">
                     {pagedBooks.map((book, index) => {
                       const pageStartIndex = (bookshelfPage - 1) * BOOKSHELF_PAGE_SIZE;
                       const colorIndex = pageStartIndex + index;
@@ -2172,34 +2277,13 @@ export default function App() {
                       );
                     })}
                   </div>
+                  </div>
                   <div className="bookshelf-board" />
-                  {bookshelfTotalPages > 1 && (
-                    <div className="mt-3 flex items-center justify-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setBookshelfPage((prev) => Math.max(1, prev - 1))}
-                        disabled={bookshelfPage === 1}
-                        className="px-3 py-1 rounded-lg border-2 border-slate-200 text-xs font-bold text-slate-600 disabled:opacity-40"
-                      >
-                        Prev
-                      </button>
-                      <p className="text-xs font-bold text-slate-500">
-                        Shelf Page {bookshelfPage} / {bookshelfTotalPages}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setBookshelfPage((prev) => Math.min(bookshelfTotalPages, prev + 1))}
-                        disabled={bookshelfPage === bookshelfTotalPages}
-                        className="px-3 py-1 rounded-lg border-2 border-slate-200 text-xs font-bold text-slate-600 disabled:opacity-40"
-                      >
-                        Next
-                      </button>
-                    </div>
-                  )}
                 </div>
               ) : (
                 <p className="text-slate-500 font-medium">No books yet. Add one to start your shelf.</p>
               )}
+              </div>
             </div>
           </motion.div>
         )}
@@ -2212,7 +2296,7 @@ export default function App() {
             exit={{ opacity: 0, y: -20 }}
             className={showRoomShell ? "" : "space-y-6"}
           >
-            <div className={`quest-card ${showRoomShell ? "flex flex-col room-tab-frame" : ""}`}>
+            <div className={roomMenuCardClass}>
               <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-2xl font-bold">My Reading Room</h2>
@@ -2226,11 +2310,23 @@ export default function App() {
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={handleStartRoomCustomization}
-                    disabled={!hasPositionableEquippedRoomItems || Boolean(roomLayoutSavingKey)}
+                    onClick={() => {
+                      setView("roomView");
+                      if (!roomState) void loadRoomState();
+                    }}
                     className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-50"
                   >
-                    Customize Room
+                    View Room
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setView("roomShop");
+                      if (!roomState) void loadRoomState();
+                    }}
+                    className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-600 font-bold hover:bg-slate-50"
+                  >
+                    Room Shop
                   </button>
                   <button
                     type="button"
@@ -2242,6 +2338,7 @@ export default function App() {
                 </div>
               </div>
 
+              <div className={roomMenuBodyClass}>
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
                 <div className="bg-amber-50 border-2 border-amber-200 rounded-xl p-3">
                   <p className="text-xs uppercase font-bold text-amber-700">XP</p>
@@ -2257,16 +2354,88 @@ export default function App() {
                 </div>
               </div>
 
-              <p className="text-sm text-slate-500 mb-3">
-                Buy and equip items here. Use Customize Room to drag equipped items around your room.
-              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="bg-white border-2 border-slate-200 rounded-xl p-3">
+                  <p className="text-xs uppercase font-bold text-slate-500">Owned Items</p>
+                  <p className="text-xl font-display font-bold">{roomOwnedCount}</p>
+                </div>
+                <div className="bg-white border-2 border-slate-200 rounded-xl p-3">
+                  <p className="text-xs uppercase font-bold text-slate-500">Equipped Items</p>
+                  <p className="text-xl font-display font-bold">{roomEquippedCount}</p>
+                </div>
+                <div className="bg-white border-2 border-slate-200 rounded-xl p-3">
+                  <p className="text-xs uppercase font-bold text-slate-500">Unlocked Shop Items</p>
+                  <p className="text-xl font-display font-bold">{roomUnlockedCount}</p>
+                </div>
+              </div>
 
-              {roomError && <p className="text-sm text-rose-600 font-medium mb-3">{roomError}</p>}
+              {roomError && <p className="text-sm text-rose-600 font-medium mt-4">{roomError}</p>}
+              </div>
+            </div>
+          </motion.div>
+        )}
 
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h3 className="font-bold text-lg">Room Shop</h3>
-                {roomShopTotalPages > 1 && (
-                  <div className="flex items-center gap-2">
+        {view === "roomShop" && (
+          <motion.div
+            key="roomShop"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className={showRoomShell ? "" : "space-y-6"}
+          >
+            <div className={roomMenuCardClass}>
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
+                <div>
+                  <h2 className="text-2xl font-bold">Room Shop</h2>
+                  <p className="text-slate-500 font-medium">Buy, equip, and organize decor by furniture type.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setView("room")}
+                    className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-600 font-bold hover:bg-slate-50"
+                  >
+                    Back to Reading Room
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView("roomView")}
+                    className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-600 font-bold hover:bg-slate-50"
+                  >
+                    View Room
+                  </button>
+                </div>
+              </div>
+
+              <div className="mb-3 flex flex-wrap gap-2">
+                {ROOM_SHOP_CATEGORIES.map((category) => {
+                  const isSelected = roomShopCategory === category.id;
+                  const count = roomShopCategoryCounts[category.id] ?? 0;
+                  return (
+                    <button
+                      key={category.id}
+                      type="button"
+                      onClick={() => setRoomShopCategory(category.id)}
+                      className={`px-3 py-1.5 rounded-xl border-2 text-xs font-bold ${
+                        isSelected
+                          ? "border-slate-900 bg-amber-200 text-slate-900"
+                          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                      }`}
+                    >
+                      {category.label} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 min-h-[2.25rem]">
+                <p className="text-sm font-semibold text-slate-500">
+                  Showing {filteredRoomShopItems.length} item{filteredRoomShopItems.length === 1 ? "" : "s"} in{" "}
+                  {ROOM_SHOP_CATEGORIES.find((category) => category.id === roomShopCategory)?.label ?? "All"}.
+                </p>
+                <div className="flex items-center gap-2 min-h-[2rem]">
+                  {roomShopTotalPages > 1 ? (
+                    <>
                     <button
                       type="button"
                       onClick={() => setRoomShopPage((prev) => Math.max(1, prev - 1))}
@@ -2286,63 +2455,70 @@ export default function App() {
                     >
                       Next
                     </button>
-                  </div>
-                )}
+                    </>
+                  ) : (
+                    <span className="text-xs font-bold text-transparent select-none">Page 1 / 1</span>
+                  )}
+                </div>
               </div>
-              <div>
-                {sortedRoomShopItems.length ? (
-                  <div className="space-y-2">
-                    {pagedRoomShopItems.map((item) => {
-                      const notEnoughCoins = !item.owned && (roomState?.coins ?? 0) < item.cost_coins;
-                      const disabled =
-                        roomBusyKey === item.key || Boolean(roomLayoutSavingKey) || !item.unlocked || notEnoughCoins;
-                      let buttonLabel = `Buy ${item.cost_coins} Coins`;
-                      let nextAction: "purchase" | "equip" | "unequip" = "purchase";
 
-                      if (!item.unlocked) {
-                        buttonLabel = `Unlock at ${item.min_xp} XP`;
-                      } else if (notEnoughCoins) {
-                        buttonLabel = `Need ${item.cost_coins} Coins`;
-                      } else if (item.owned && item.equipped) {
-                        buttonLabel = "Unequip";
-                        nextAction = "unequip";
-                      } else if (item.owned) {
-                        buttonLabel = "Equip";
-                        nextAction = "equip";
-                      }
+              <div className="flex-1 min-h-0">
+              <div className="space-y-2 room-shop-scroll h-full pr-1">
+                {pagedRoomShopItems.length ? (
+                  pagedRoomShopItems.map((item) => {
+                    const notEnoughCoins = !item.owned && (roomState?.coins ?? 0) < item.cost_coins;
+                    const disabled =
+                      roomBusyKey === item.key || Boolean(roomLayoutSavingKey) || !item.unlocked || notEnoughCoins;
+                    let buttonLabel = `Buy ${item.cost_coins} Coins`;
+                    let nextAction: "purchase" | "equip" | "unequip" = "purchase";
 
-                      return (
-                        <div
-                          key={item.key}
-                          className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
-                        >
-                          <div>
-                            <p className="font-bold text-slate-900">{item.name}</p>
-                            <p className="text-sm text-slate-600">{item.description}</p>
-                            <p className="text-xs font-semibold text-slate-500 mt-1">
-                              Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleRoomAction(nextAction, item.key)}
-                            disabled={disabled}
-                            className={`px-3 py-2 rounded-xl border-2 text-sm font-bold ${
-                              item.owned && item.equipped
-                                ? "border-emerald-300 bg-emerald-100 text-emerald-700"
-                                : "border-slate-300 bg-white text-slate-700"
-                            } disabled:opacity-50`}
-                          >
-                            {roomBusyKey === item.key ? "Saving..." : buttonLabel}
-                          </button>
+                    if (!item.unlocked) {
+                      buttonLabel = `Unlock at ${item.min_xp} XP`;
+                    } else if (notEnoughCoins) {
+                      buttonLabel = `Need ${item.cost_coins} Coins`;
+                    } else if (item.owned && item.equipped) {
+                      buttonLabel = "Unequip";
+                      nextAction = "unequip";
+                    } else if (item.owned) {
+                      buttonLabel = "Equip";
+                      nextAction = "equip";
+                    }
+
+                    return (
+                      <div
+                        key={item.key}
+                        className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+                      >
+                        <div>
+                          <p className="font-bold text-slate-900">{item.name}</p>
+                          <p className="text-sm text-slate-600">{item.description}</p>
+                          <p className="text-xs font-semibold text-slate-500 mt-1">
+                            Category: {ROOM_SHOP_CATEGORIES.find((category) => category.id === getRoomShopCategory(item.key))?.label ?? "Misc"}{" "}
+                            | Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
+                          </p>
                         </div>
-                      );
-                    })}
-                  </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRoomAction(nextAction, item.key)}
+                          disabled={disabled}
+                          className={`px-3 py-2 rounded-xl border-2 text-sm font-bold ${
+                            item.owned && item.equipped
+                              ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+                              : "border-slate-300 bg-white text-slate-700"
+                          } disabled:opacity-50`}
+                        >
+                          {roomBusyKey === item.key ? "Saving..." : buttonLabel}
+                        </button>
+                      </div>
+                    );
+                  })
                 ) : (
-                  <p className="text-slate-500">No room items found.</p>
+                  <p className="text-slate-500">No room items found in this category.</p>
                 )}
               </div>
+              </div>
+
+              {roomError && <p className="text-sm text-rose-600 font-medium mt-3">{roomError}</p>}
             </div>
           </motion.div>
         )}
@@ -2355,7 +2531,7 @@ export default function App() {
             exit={{ opacity: 0, y: -20 }}
             className="space-y-6"
           >
-            <div className="quest-card">
+            <div className={roomMenuCardClass}>
               <div className="flex items-start justify-between gap-3 mb-5">
                 <div>
                   <h3 className="text-2xl font-bold">{activeBook.title}</h3>
@@ -2369,6 +2545,7 @@ export default function App() {
                   Back to Bookshelf
                 </button>
               </div>
+              <div className={roomMenuBodyClass}>
               <div className="mb-6">
                 <div className="flex justify-between text-sm font-bold mb-2">
                   <span>Progress</span>
@@ -2418,6 +2595,7 @@ export default function App() {
               >
                 <Timer className="w-5 h-5" /> Start Reading Session
               </button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -2672,28 +2850,26 @@ export default function App() {
             <div className="bg-white p-3 rounded-2xl border-2 border-slate-900 mb-2 flex items-center justify-center">
               <BookIcon className="w-5 h-5 text-sky-500" />
             </div>
-            <p className="text-[10px] font-bold uppercase text-slate-400">Books Read</p>
-            <p className="font-bold">{stats.total_books}</p>
+            <p className="text-[10px] font-bold uppercase text-slate-700">Books Read</p>
+            <p className="font-bold text-slate-900">{stats.total_books}</p>
           </div>
           <div className="text-center">
             <div className="bg-white p-3 rounded-2xl border-2 border-slate-900 mb-2 flex items-center justify-center">
               <CheckCircle2 className="w-5 h-5 text-emerald-500" />
             </div>
-            <p className="text-[10px] font-bold uppercase text-slate-400">Quests Done</p>
-            <p className="font-bold">{stats.total_sessions}</p>
+            <p className="text-[10px] font-bold uppercase text-slate-700">Quests Done</p>
+            <p className="font-bold text-slate-900">{stats.total_sessions}</p>
           </div>
           <div className="text-center">
             <div className="bg-white p-3 rounded-2xl border-2 border-slate-900 mb-2 flex items-center justify-center">
               <Clock className="w-5 h-5 text-amber-500" />
             </div>
-            <p className="text-[10px] font-bold uppercase text-slate-400">Total Hours</p>
-            <p className="font-bold">{stats.total_hours}</p>
+            <p className="text-[10px] font-bold uppercase text-slate-700">Total Hours</p>
+            <p className="font-bold text-slate-900">{stats.total_hours}</p>
           </div>
         </footer>
       )}
       </>
-      </div>
-      </div>
       )}
       </div>
     </div>
