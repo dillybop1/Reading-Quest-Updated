@@ -218,6 +218,13 @@ export default function App() {
   const [teacherSetupError, setTeacherSetupError] = useState<string | null>(null);
   const [teacherSetupResult, setTeacherSetupResult] = useState<AdminCreateStudentsResponse | null>(null);
   const [isTeacherSetupSaving, setIsTeacherSetupSaving] = useState(false);
+  const [starterTemplateError, setStarterTemplateError] = useState<string | null>(null);
+  const [starterTemplateResult, setStarterTemplateResult] = useState<{
+    item_count: number;
+    source: { class_code: string; nickname: string };
+    updated_at: string;
+  } | null>(null);
+  const [isStarterTemplateSaving, setIsStarterTemplateSaving] = useState(false);
   const [adminReflections, setAdminReflections] = useState<AdminReflectionsResponse | null>(null);
   const [grantCoinsInputByStudent, setGrantCoinsInputByStudent] = useState<Record<number, string>>({});
   const [grantCoinsBusyStudentId, setGrantCoinsBusyStudentId] = useState<number | null>(null);
@@ -932,6 +939,8 @@ export default function App() {
     setAdminSection("roster");
     setTeacherSetupError(null);
     setTeacherSetupResult(null);
+    setStarterTemplateError(null);
+    setStarterTemplateResult(null);
     setView("admin");
   };
 
@@ -1110,9 +1119,58 @@ export default function App() {
     }
   };
 
+  const handleSaveStarterTemplateFromCurrentStudent = async () => {
+    if (!adminAccessKey) {
+      setStarterTemplateError("Admin session expired. Re-open admin mode.");
+      return;
+    }
+    if (!student) {
+      setStarterTemplateError("Select a student first, then open admin mode.");
+      return;
+    }
+
+    setStarterTemplateError(null);
+    setStarterTemplateResult(null);
+    setIsStarterTemplateSaving(true);
+
+    try {
+      const response = await fetch("/api/admin/starter-template", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminAccessKey,
+        },
+        body: JSON.stringify({
+          class_code: student.class_code,
+          nickname: student.nickname,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Failed: ${response.status}`);
+      }
+
+      setStarterTemplateResult({
+        item_count: Number(data?.item_count ?? 0),
+        source: {
+          class_code: String(data?.source?.class_code ?? student.class_code),
+          nickname: String(data?.source?.nickname ?? student.nickname),
+        },
+        updated_at: String(data?.updated_at ?? new Date().toISOString()),
+      });
+    } catch (err: any) {
+      setStarterTemplateError(String(err?.message ?? err));
+    } finally {
+      setIsStarterTemplateSaving(false);
+    }
+  };
+
   const handleExitAdmin = () => {
     setShowAdminPrompt(false);
     setAdminError(null);
+    setStarterTemplateError(null);
+    setStarterTemplateResult(null);
     setView(student ? (books.length > 0 ? "bookshelf" : "setup") : "student");
   };
 
@@ -1284,6 +1342,8 @@ export default function App() {
     setTeacherNicknamesInput("");
     setTeacherSetupError(null);
     setTeacherSetupResult(null);
+    setStarterTemplateError(null);
+    setStarterTemplateResult(null);
     setDeleteBusyKey(null);
     setAdminTapCount(0);
     localStorage.removeItem(STUDENT_STORAGE_KEY);
@@ -1489,7 +1549,7 @@ export default function App() {
   const mainAreaClassName = showRoomShell ? "flex-1 min-h-0" : "";
   const showFooterStats = Boolean(
     stats &&
-      (view === "dashboard" || (view === "bookshelf" && !showAddBookForm)) &&
+      (view === "bookshelf" && !showAddBookForm) &&
       showAppChrome
   );
   const roomOwnedCount = roomState?.items.filter((item) => item.owned).length ?? 0;
@@ -1993,6 +2053,37 @@ export default function App() {
                     {isTeacherSetupSaving ? "Saving..." : "Create Student Logins"}
                   </button>
                 </form>
+
+                <div className="mt-6 border-t border-slate-200 pt-5">
+                  <h4 className="font-bold text-base mb-1">Starter Room Template</h4>
+                  <p className="text-sm text-slate-500 mb-3">
+                    Save the currently logged-in student&apos;s equipped room as the starter room for all future students.
+                  </p>
+                  {student && (
+                    <p className="text-xs font-semibold text-slate-500 mb-3">
+                      Source student: {student.class_code} / {student.nickname}
+                    </p>
+                  )}
+                  {starterTemplateError && <p className="text-sm text-rose-600 font-medium mb-3">{starterTemplateError}</p>}
+                  {starterTemplateResult && (
+                    <div className="bg-emerald-50 border-2 border-emerald-200 rounded-xl p-3 text-sm mb-3">
+                      <p className="font-bold text-emerald-800">
+                        Starter template saved from {starterTemplateResult.source.nickname} ({starterTemplateResult.source.class_code})
+                      </p>
+                      <p className="text-emerald-700">
+                        Items: {starterTemplateResult.item_count} | Updated: {new Date(starterTemplateResult.updated_at).toLocaleString()}
+                      </p>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleSaveStarterTemplateFromCurrentStudent}
+                    disabled={isStarterTemplateSaving || !student}
+                    className="w-full py-3 rounded-2xl border-2 border-slate-900 bg-slate-100 font-bold text-slate-900 disabled:opacity-50"
+                  >
+                    {isStarterTemplateSaving ? "Saving Template..." : "Use Current Student Room As Starter Template"}
+                  </button>
+                </div>
               </div>
             )}
 

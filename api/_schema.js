@@ -77,6 +77,18 @@ export const ensureSchema = async () => {
       )
     `);
 
+    await query(`
+      CREATE TABLE IF NOT EXISTS room_starter_template_items (
+        id SERIAL PRIMARY KEY,
+        item_key TEXT NOT NULL UNIQUE,
+        pos_x REAL,
+        pos_y REAL,
+        z_index INTEGER,
+        sort_order INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
     await query(`ALTER TABLE books ADD COLUMN IF NOT EXISTS student_id INTEGER`);
     await query(`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS student_id INTEGER`);
     await query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS student_id INTEGER`);
@@ -104,6 +116,12 @@ export const ensureSchema = async () => {
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS pos_y REAL`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS z_index INTEGER`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+    await query(`ALTER TABLE room_starter_template_items ADD COLUMN IF NOT EXISTS item_key TEXT`);
+    await query(`ALTER TABLE room_starter_template_items ADD COLUMN IF NOT EXISTS pos_x REAL`);
+    await query(`ALTER TABLE room_starter_template_items ADD COLUMN IF NOT EXISTS pos_y REAL`);
+    await query(`ALTER TABLE room_starter_template_items ADD COLUMN IF NOT EXISTS z_index INTEGER`);
+    await query(`ALTER TABLE room_starter_template_items ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0`);
+    await query(`ALTER TABLE room_starter_template_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
 
     await query(`
       CREATE UNIQUE INDEX IF NOT EXISTS students_class_nickname_key
@@ -117,12 +135,17 @@ export const ensureSchema = async () => {
       CREATE UNIQUE INDEX IF NOT EXISTS student_room_items_student_item_key
       ON student_room_items(student_id, item_key)
     `);
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS room_starter_template_items_item_key
+      ON room_starter_template_items(item_key)
+    `);
     await query(`CREATE INDEX IF NOT EXISTS books_student_id_idx ON books(student_id)`);
     await query(`CREATE INDEX IF NOT EXISTS books_student_active_idx ON books(student_id, is_active)`);
     await query(`CREATE INDEX IF NOT EXISTS sessions_student_id_idx ON sessions(student_id)`);
     await query(`CREATE INDEX IF NOT EXISTS session_reflections_student_id_idx ON session_reflections(student_id)`);
     await query(`CREATE INDEX IF NOT EXISTS session_reflections_session_id_idx ON session_reflections(session_id)`);
     await query(`CREATE INDEX IF NOT EXISTS student_room_items_student_id_idx ON student_room_items(student_id)`);
+    await query(`CREATE INDEX IF NOT EXISTS room_starter_template_items_sort_order_idx ON room_starter_template_items(sort_order)`);
   })().catch((err) => {
     schemaPromise = null;
     throw err;

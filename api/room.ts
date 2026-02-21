@@ -314,7 +314,7 @@ type StarterRoomItemLayout = {
   z_index: number;
 };
 
-const STARTER_ROOM_LAYOUT: StarterRoomItemLayout[] = [
+const FALLBACK_STARTER_ROOM_LAYOUT: StarterRoomItemLayout[] = [
   { key: "bookshelf_2", pos_x: 12, pos_y: 67, z_index: 16 },
   { key: "small_plant", pos_x: 8, pos_y: 41, z_index: 29 },
   { key: "desk", pos_x: 27, pos_y: 76, z_index: 16 },
@@ -331,9 +331,46 @@ const STARTER_ROOM_LAYOUT: StarterRoomItemLayout[] = [
   { key: "hamper", pos_x: 98, pos_y: 78, z_index: 17 },
 ];
 
-const STARTER_ROOM_ITEM_KEYS = STARTER_ROOM_LAYOUT.map((entry) => entry.key);
+const getStarterRoomItemKeys = (starterRoomLayout: StarterRoomItemLayout[]) =>
+  starterRoomLayout.map((entry) => entry.key);
 
-const ensureStarterRoomItems = async (studentId: number) => {
+const loadStarterRoomLayout = async (): Promise<StarterRoomItemLayout[]> => {
+  const templateResult = await query(
+    `
+      SELECT item_key, pos_x, pos_y, z_index
+      FROM room_starter_template_items
+      ORDER BY sort_order ASC, id ASC
+    `
+  );
+
+  if (!templateResult.rows.length) {
+    return FALLBACK_STARTER_ROOM_LAYOUT;
+  }
+
+  const parsed = templateResult.rows
+    .map((row) => {
+      const key = typeof row.item_key === "string" ? row.item_key : "";
+      if (!key) return null;
+
+      const posX = Number(row.pos_x);
+      const posY = Number(row.pos_y);
+      const zIndex = Number.parseInt(String(row.z_index), 10);
+      return {
+        key,
+        pos_x: Number.isFinite(posX) ? clamp(posX, ROOM_POSITION_MIN, ROOM_POSITION_MAX) : 50,
+        pos_y: Number.isFinite(posY) ? clamp(posY, ROOM_POSITION_MIN, ROOM_POSITION_MAX) : 50,
+        z_index: Number.isFinite(zIndex) ? clamp(zIndex, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX) : ROOM_Z_INDEX_MIN,
+      };
+    })
+    .filter((entry): entry is StarterRoomItemLayout => Boolean(entry));
+
+  return parsed.length ? parsed : FALLBACK_STARTER_ROOM_LAYOUT;
+};
+
+const ensureStarterRoomItems = async (studentId: number, starterRoomLayout: StarterRoomItemLayout[]) => {
+  const starterRoomItemKeys = getStarterRoomItemKeys(starterRoomLayout);
+  if (!starterRoomItemKeys.length) return;
+
   const [ownedResult, ownedStarterResult] = await Promise.all([
     query("SELECT COUNT(*)::int AS count FROM student_room_items WHERE student_id = $1", [studentId]),
     query(
@@ -343,7 +380,7 @@ const ensureStarterRoomItems = async (studentId: number) => {
         WHERE student_id = $1
           AND item_key = ANY($2::text[])
       `,
-      [studentId, STARTER_ROOM_ITEM_KEYS]
+      [studentId, starterRoomItemKeys]
     ),
   ]);
 
@@ -354,10 +391,10 @@ const ensureStarterRoomItems = async (studentId: number) => {
       .filter(Boolean)
   );
 
-  if (ownedStarterKeys.size === STARTER_ROOM_ITEM_KEYS.length) return;
+  if (ownedStarterKeys.size === starterRoomItemKeys.length) return;
 
   if (ownedCount === 0) {
-    for (const starter of STARTER_ROOM_LAYOUT) {
+    for (const starter of starterRoomLayout) {
       await query(
         `
           INSERT INTO student_room_items (student_id, item_key, is_equipped, pos_x, pos_y, z_index)
@@ -370,7 +407,7 @@ const ensureStarterRoomItems = async (studentId: number) => {
     return;
   }
 
-  const missingStarterKeys = STARTER_ROOM_ITEM_KEYS.filter((key) => !ownedStarterKeys.has(key));
+  const missingStarterKeys = starterRoomItemKeys.filter((key) => !ownedStarterKeys.has(key));
   await Promise.all(
     missingStarterKeys.map((itemKey) =>
       query(
@@ -385,8 +422,10 @@ const ensureStarterRoomItems = async (studentId: number) => {
   );
 };
 
-const buildRoomState = async (studentId: number) => {
-  await ensureStarterRoomItems(studentId);
+const buildRoomState = async (studentId: number, starterRoomLayout?: StarterRoomItemLayout[]) => {
+  const resolvedStarterLayout = starterRoomLayout ?? (await loadStarterRoomLayout());
+  await ensureStarterRoomItems(studentId, resolvedStarterLayout);
+  const starterRoomItemKeys = new Set(getStarterRoomItemKeys(resolvedStarterLayout));
 
   const [statsResult, ownedResult] = await Promise.all([
     query("SELECT total_xp, coins FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1", [studentId]),
@@ -433,12 +472,17 @@ const buildRoomState = async (studentId: number) => {
   }
 
   const items = ROOM_ITEM_CATALOG.map((item) => {
+    const isStarterItem = starterRoomItemKeys.has(item.key);
+    const requiredXp = isStarterItem ? 0 : item.min_xp;
+    const itemCostCoins = isStarterItem ? 0 : item.cost_coins;
     const ownedState = ownedMap.get(item.key);
     const owned = Boolean(ownedState);
     const equipped = ownedState?.equipped ?? false;
-    const unlocked = totalXp >= item.min_xp;
+    const unlocked = totalXp >= requiredXp;
     return {
       ...item,
+      cost_coins: itemCostCoins,
+      min_xp: requiredXp,
       owned,
       equipped,
       unlocked,
@@ -462,9 +506,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if ("error" in student) {
       return res.status(400).json({ error: student.error });
     }
+    const starterRoomLayout = await loadStarterRoomLayout();
+    const starterRoomItemKeys = new Set(getStarterRoomItemKeys(starterRoomLayout));
 
     if (req.method === "GET") {
-      const roomState = await buildRoomState(student.studentId);
+      const roomState = await buildRoomState(student.studentId, starterRoomLayout);
       return res.status(200).json(roomState);
     }
 
@@ -477,7 +523,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await query("UPDATE student_room_items SET pos_x = NULL, pos_y = NULL, z_index = NULL WHERE student_id = $1", [
         student.studentId,
       ]);
-      const roomState = await buildRoomState(student.studentId);
+      const roomState = await buildRoomState(student.studentId, starterRoomLayout);
       return res.status(200).json(roomState);
     }
 
@@ -487,19 +533,21 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "Invalid item_key" });
     }
 
-    const roomStateBefore = await buildRoomState(student.studentId);
+    const roomStateBefore = await buildRoomState(student.studentId, starterRoomLayout);
     const alreadyOwned = roomStateBefore.items.find((row) => row.key === item.key)?.owned ?? false;
+    const itemCostCoins = starterRoomItemKeys.has(item.key) ? 0 : item.cost_coins;
+    const itemRequiredXp = starterRoomItemKeys.has(item.key) ? 0 : item.min_xp;
 
     if (action === "purchase") {
       if (alreadyOwned) {
         return res.status(400).json({ error: "Item already owned" });
       }
 
-      if (roomStateBefore.total_xp < item.min_xp) {
+      if (roomStateBefore.total_xp < itemRequiredXp) {
         return res.status(400).json({ error: "Not enough XP to unlock this item" });
       }
 
-      if (roomStateBefore.coins < item.cost_coins) {
+      if (roomStateBefore.coins < itemCostCoins) {
         return res.status(400).json({ error: "Not enough coins" });
       }
 
@@ -509,7 +557,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           SET coins = COALESCE(coins, 0) - $1
           WHERE student_id = $2 AND COALESCE(coins, 0) >= $1
         `,
-        [item.cost_coins, student.studentId]
+        [itemCostCoins, student.studentId]
       );
       if (!coinsUpdated.rowCount) {
         return res.status(400).json({ error: "Not enough coins" });
@@ -604,7 +652,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(400).json({ error: "Invalid action" });
     }
 
-    const roomState = await buildRoomState(student.studentId);
+    const roomState = await buildRoomState(student.studentId, starterRoomLayout);
     return res.status(200).json(roomState);
   } catch (err: any) {
     console.error(err);
