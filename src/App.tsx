@@ -1221,10 +1221,14 @@ export default function App() {
       const rewardData = (await response.json()) as Partial<SessionRewardSummary> & {
         coins?: number;
       };
+      setEarnedXp(Number(rewardData.xp_earned ?? xp));
       setSessionRewardSummary({
         total_xp: Number(rewardData.total_xp ?? (stats?.total_xp ?? 0)),
         level: Number(rewardData.level ?? (stats?.level ?? 1)),
         coins: Number(rewardData.coins ?? (stats?.coins ?? 0)),
+        xp_earned: Number(rewardData.xp_earned ?? xp),
+        streak_days: Number(rewardData.streak_days ?? (stats?.streak_days ?? 1)),
+        streak_multiplier: Number(rewardData.streak_multiplier ?? 1),
         coins_earned: Number(rewardData.coins_earned ?? 0),
         milestone_bonus_coins: Number(rewardData.milestone_bonus_coins ?? 0),
         milestones_reached: Number(rewardData.milestones_reached ?? 0),
@@ -2259,7 +2263,9 @@ export default function App() {
                     <Flame className="w-4 h-4" />
                     <span className="text-xs font-bold uppercase">Streak</span>
                   </div>
-                  <p className="font-bold text-xl">3 Days</p>
+                  <p className="font-bold text-xl">
+                    {Math.max(1, stats?.streak_days ?? 1)} {Math.max(1, stats?.streak_days ?? 1) === 1 ? "Day" : "Days"}
+                  </p>
                 </div>
               </div>
 

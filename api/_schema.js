@@ -48,7 +48,9 @@ export const ensureSchema = async () => {
         total_xp INTEGER DEFAULT 0,
         level INTEGER DEFAULT 1,
         coins INTEGER DEFAULT 0,
-        total_coins_earned INTEGER DEFAULT 0
+        total_coins_earned INTEGER DEFAULT 0,
+        streak_days INTEGER DEFAULT 1,
+        last_active_date DATE
       )
     `);
 
@@ -87,6 +89,8 @@ export const ensureSchema = async () => {
     await query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS level INTEGER DEFAULT 1`);
     await query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS coins INTEGER DEFAULT 0`);
     await query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS total_coins_earned INTEGER DEFAULT 0`);
+    await query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS streak_days INTEGER DEFAULT 1`);
+    await query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS last_active_date DATE`);
     await query(`ALTER TABLE session_reflections ADD COLUMN IF NOT EXISTS student_id INTEGER`);
     await query(`ALTER TABLE session_reflections ADD COLUMN IF NOT EXISTS book_id INTEGER`);
     await query(`ALTER TABLE session_reflections ADD COLUMN IF NOT EXISTS question_index INTEGER`);

@@ -7,6 +7,9 @@ const XP_MILESTONE_STEP = 500;
 const COIN_DIVISOR = 10;
 const MILESTONE_BONUS_COINS = 75;
 const MAX_REFLECTION_LENGTH = 4000;
+const STREAK_XP_BONUS_PER_DAY = 0.05;
+const STREAK_XP_BONUS_MAX = 0.5;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
 const parseReflectionEntries = (questions: unknown, answers: unknown) => {
   const questionList = Array.isArray(questions) ? questions : [];
@@ -49,6 +52,69 @@ const getSessionCoinRewards = (previousXp: number, xpEarned: number) => {
   };
 };
 
+const getTodayDateString = () => new Date().toISOString().slice(0, 10);
+const parseIsoDateMs = (value: string) => {
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const computeNextStreak = (currentStreak: number, lastActiveDate: string | null | undefined, today: string) => {
+  const safeCurrentStreak = Math.max(1, Math.floor(currentStreak || 1));
+  const normalizedLastActive = typeof lastActiveDate === "string" ? lastActiveDate.trim().slice(0, 10) : "";
+
+  if (!normalizedLastActive) {
+    return { streakDays: safeCurrentStreak, lastActiveDate: today, changed: true };
+  }
+
+  if (normalizedLastActive === today) {
+    return { streakDays: safeCurrentStreak, lastActiveDate: normalizedLastActive, changed: false };
+  }
+
+  const lastMs = parseIsoDateMs(normalizedLastActive);
+  const todayMs = parseIsoDateMs(today);
+  if (!Number.isFinite(lastMs) || !Number.isFinite(todayMs)) {
+    return { streakDays: 1, lastActiveDate: today, changed: true };
+  }
+
+  const dayDiff = Math.floor((todayMs - lastMs) / ONE_DAY_MS);
+  if (dayDiff === 1) {
+    return { streakDays: safeCurrentStreak + 1, lastActiveDate: today, changed: true };
+  }
+
+  if (dayDiff > 1) {
+    return { streakDays: 1, lastActiveDate: today, changed: true };
+  }
+
+  return { streakDays: safeCurrentStreak, lastActiveDate: normalizedLastActive, changed: false };
+};
+
+const getStreakXpMultiplier = (streakDays: number) => {
+  const safeStreak = Math.max(1, Math.floor(streakDays || 1));
+  const bonus = Math.min(STREAK_XP_BONUS_MAX, Math.max(0, safeStreak - 1) * STREAK_XP_BONUS_PER_DAY);
+  return 1 + bonus;
+};
+
+const touchStudentStreak = async (studentId: number) => {
+  const today = getTodayDateString();
+  const currentStats = await query(
+    "SELECT streak_days, last_active_date::text AS last_active_date FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1",
+    [studentId]
+  );
+  const currentStreak = Number(currentStats.rows[0]?.streak_days ?? 1);
+  const lastActiveDate = (currentStats.rows[0]?.last_active_date as string | null | undefined) ?? null;
+  const next = computeNextStreak(currentStreak, lastActiveDate, today);
+
+  if (next.changed) {
+    await query("UPDATE user_stats SET streak_days = $1, last_active_date = $2 WHERE student_id = $3", [
+      next.streakDays,
+      next.lastActiveDate,
+      studentId,
+    ]);
+  }
+
+  return next.streakDays;
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const student = await resolveStudent(req);
@@ -87,12 +153,17 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(404).json({ error: "Book not found for this student" });
       }
 
+      const streakDays = await touchStudentStreak(student.studentId);
+      const streakMultiplier = getStreakXpMultiplier(streakDays);
+      const submittedXp = Math.max(0, Math.floor(Number(xp_earned)));
+      const boostedXpEarned = Math.max(0, Math.round(submittedXp * streakMultiplier));
+
       const session = await query(
         `INSERT INTO sessions
          (book_id, student_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
          RETURNING *`,
-        [book_id, student.studentId, start_page, end_page, chapters_finished, duration_minutes, xp_earned]
+        [book_id, student.studentId, start_page, end_page, chapters_finished, duration_minutes, boostedXpEarned]
       );
 
       const sessionId = session.rows[0]?.id;
@@ -131,7 +202,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const previousXp = Number(statsBefore.rows[0]?.total_xp ?? 0);
       const previousCoins = Number(statsBefore.rows[0]?.coins ?? 0);
       const previousTotalCoinsEarned = Number(statsBefore.rows[0]?.total_coins_earned ?? 0);
-      const safeXpEarned = Math.max(0, Math.floor(Number(xp_earned)));
+      const safeXpEarned = boostedXpEarned;
       const coinRewards = getSessionCoinRewards(previousXp, safeXpEarned);
 
       const totalXp = previousXp + safeXpEarned;
@@ -153,6 +224,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         total_xp: totalXp,
         level: newLevel,
         coins: newCoins,
+        xp_earned: safeXpEarned,
+        streak_days: streakDays,
+        streak_multiplier: streakMultiplier,
         coins_earned: coinRewards.totalCoins,
         milestone_bonus_coins: coinRewards.milestoneCoins,
         milestones_reached: coinRewards.milestonesCrossed,

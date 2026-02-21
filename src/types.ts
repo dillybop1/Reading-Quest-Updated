@@ -12,6 +12,7 @@ export interface UserStats {
   level: number;
   coins: number;
   total_coins_earned: number;
+  streak_days: number;
   next_milestone_xp: number;
   total_sessions: number;
   total_hours: number;
@@ -90,6 +91,9 @@ export interface SessionRewardSummary {
   total_xp: number;
   level: number;
   coins: number;
+  xp_earned?: number;
+  streak_days?: number;
+  streak_multiplier?: number;
   coins_earned: number;
   milestone_bonus_coins: number;
   milestones_reached: number;

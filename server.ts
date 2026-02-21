@@ -49,6 +49,8 @@ db.exec(`
     level INTEGER DEFAULT 1,
     coins INTEGER DEFAULT 0,
     total_coins_earned INTEGER DEFAULT 0,
+    streak_days INTEGER DEFAULT 1,
+    last_active_date TEXT,
     FOREIGN KEY(student_id) REFERENCES students(id)
   );
 
@@ -102,6 +104,8 @@ ensureColumn("user_stats", "total_xp", "INTEGER DEFAULT 0");
 ensureColumn("user_stats", "level", "INTEGER DEFAULT 1");
 ensureColumn("user_stats", "coins", "INTEGER DEFAULT 0");
 ensureColumn("user_stats", "total_coins_earned", "INTEGER DEFAULT 0");
+ensureColumn("user_stats", "streak_days", "INTEGER DEFAULT 1");
+ensureColumn("user_stats", "last_active_date", "TEXT");
 ensureColumn("session_reflections", "session_id", "INTEGER");
 ensureColumn("session_reflections", "student_id", "INTEGER");
 ensureColumn("session_reflections", "book_id", "INTEGER");
@@ -530,6 +534,69 @@ const getSessionCoinRewards = (previousXp: number, xpEarned: number) => {
   };
 };
 
+const STREAK_XP_BONUS_PER_DAY = 0.05;
+const STREAK_XP_BONUS_MAX = 0.5;
+const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const getTodayDateString = () => new Date().toISOString().slice(0, 10);
+const parseIsoDateMs = (value: string) => {
+  const parsed = Date.parse(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const computeNextStreak = (currentStreak: number, lastActiveDate: string | null | undefined, today: string) => {
+  const safeCurrentStreak = Math.max(1, Math.floor(currentStreak || 1));
+  const normalizedLastActive = typeof lastActiveDate === "string" ? lastActiveDate.trim().slice(0, 10) : "";
+
+  if (!normalizedLastActive) {
+    return { streakDays: safeCurrentStreak, lastActiveDate: today, changed: true };
+  }
+
+  if (normalizedLastActive === today) {
+    return { streakDays: safeCurrentStreak, lastActiveDate: normalizedLastActive, changed: false };
+  }
+
+  const lastMs = parseIsoDateMs(normalizedLastActive);
+  const todayMs = parseIsoDateMs(today);
+  if (!Number.isFinite(lastMs) || !Number.isFinite(todayMs)) {
+    return { streakDays: 1, lastActiveDate: today, changed: true };
+  }
+
+  const dayDiff = Math.floor((todayMs - lastMs) / ONE_DAY_MS);
+  if (dayDiff === 1) {
+    return { streakDays: safeCurrentStreak + 1, lastActiveDate: today, changed: true };
+  }
+
+  if (dayDiff > 1) {
+    return { streakDays: 1, lastActiveDate: today, changed: true };
+  }
+
+  return { streakDays: safeCurrentStreak, lastActiveDate: normalizedLastActive, changed: false };
+};
+
+const getStreakXpMultiplier = (streakDays: number) => {
+  const safeStreak = Math.max(1, Math.floor(streakDays || 1));
+  const bonus = Math.min(STREAK_XP_BONUS_MAX, Math.max(0, safeStreak - 1) * STREAK_XP_BONUS_PER_DAY);
+  return 1 + bonus;
+};
+
+const touchStudentStreak = (studentId: number) => {
+  const today = getTodayDateString();
+  const current =
+    (db
+      .prepare("SELECT streak_days, last_active_date FROM user_stats WHERE student_id = ? LIMIT 1")
+      .get(studentId) as { streak_days?: number; last_active_date?: string | null } | undefined) ?? {};
+  const next = computeNextStreak(Number(current.streak_days ?? 1), current.last_active_date, today);
+  if (next.changed) {
+    db.prepare("UPDATE user_stats SET streak_days = ?, last_active_date = ? WHERE student_id = ?").run(
+      next.streakDays,
+      next.lastActiveDate,
+      studentId
+    );
+  }
+
+  return next.streakDays;
+};
+
 const buildRoomState = (studentId: number) => {
   const stats =
     (db
@@ -676,10 +743,12 @@ async function startServer() {
     const student = resolveStudent(req, res);
     if (!student) return;
 
+    const streakDays = touchStudentStreak(student.studentId);
+
     const stats =
       (db.prepare("SELECT * FROM user_stats WHERE student_id = ? LIMIT 1").get(student.studentId) as
-        | { total_xp: number; level: number; coins?: number; total_coins_earned?: number }
-        | undefined) ?? { total_xp: 0, level: 1, coins: 0, total_coins_earned: 0 };
+        | { total_xp: number; level: number; coins?: number; total_coins_earned?: number; streak_days?: number }
+        | undefined) ?? { total_xp: 0, level: 1, coins: 0, total_coins_earned: 0, streak_days: 1 };
 
     const totalSessions = db
       .prepare("SELECT COUNT(*) as count FROM sessions WHERE student_id = ?")
@@ -693,6 +762,7 @@ async function startServer() {
 
     res.json({
       ...stats,
+      streak_days: Math.max(1, Number(stats.streak_days ?? streakDays ?? 1)),
       total_sessions: totalSessions.count,
       total_hours: Math.round(((totalMinutes.total || 0) / 60) * 10) / 10,
       total_books: totalBooks.count,
@@ -769,6 +839,11 @@ async function startServer() {
   });
 
   const runSessionTransaction = db.transaction((payload: SessionPayload, studentId: number) => {
+    const streakDays = touchStudentStreak(studentId);
+    const streakMultiplier = getStreakXpMultiplier(streakDays);
+    const submittedXp = Math.max(0, Math.floor(payload.xp_earned || 0));
+    const boostedXpEarned = Math.max(0, Math.round(submittedXp * streakMultiplier));
+
     const sessionInsert = db
       .prepare(
         `INSERT INTO sessions (book_id, student_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned)
@@ -781,7 +856,7 @@ async function startServer() {
         payload.end_page,
         payload.chapters_finished,
         payload.duration_minutes,
-        payload.xp_earned
+        boostedXpEarned
       );
     const sessionId = Number(sessionInsert.lastInsertRowid);
 
@@ -816,7 +891,7 @@ async function startServer() {
     const previousXp = Number(currentStats.total_xp ?? 0);
     const previousCoins = Number(currentStats.coins ?? 0);
     const previousTotalCoinsEarned = Number(currentStats.total_coins_earned ?? 0);
-    const safeXpEarned = Math.max(0, Math.floor(payload.xp_earned || 0));
+    const safeXpEarned = boostedXpEarned;
     const coinRewards = getSessionCoinRewards(previousXp, safeXpEarned);
     const totalXp = previousXp + safeXpEarned;
     const newLevel = Math.floor(totalXp / XP_PER_LEVEL) + 1;
@@ -839,6 +914,9 @@ async function startServer() {
       coinsEarned: coinRewards.totalCoins,
       milestoneBonusCoins: coinRewards.milestoneCoins,
       milestonesReached: coinRewards.milestonesCrossed,
+      xpEarned: safeXpEarned,
+      streakDays,
+      streakMultiplier,
     };
   });
 
@@ -888,6 +966,9 @@ async function startServer() {
       total_xp: sessionResult.totalXp,
       level: sessionResult.level,
       coins: sessionResult.coins,
+      xp_earned: sessionResult.xpEarned,
+      streak_days: sessionResult.streakDays,
+      streak_multiplier: sessionResult.streakMultiplier,
       coins_earned: sessionResult.coinsEarned,
       milestone_bonus_coins: sessionResult.milestoneBonusCoins,
       milestones_reached: sessionResult.milestonesReached,
