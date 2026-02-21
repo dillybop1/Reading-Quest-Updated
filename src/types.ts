@@ -25,6 +25,7 @@ export interface ReadingSession {
   end_page: number;
   chapters_finished: number;
   duration_minutes: number;
+  goal_minutes?: number;
   xp_earned: number;
 }
 
@@ -96,6 +97,8 @@ export interface SessionRewardSummary {
   streak_multiplier?: number;
   coins_earned: number;
   milestone_bonus_coins: number;
+  overtime_bonus_coins?: number;
+  overtime_minutes?: number;
   milestones_reached: number;
 }
 

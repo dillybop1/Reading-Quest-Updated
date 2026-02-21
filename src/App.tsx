@@ -41,6 +41,8 @@ const ROOM_POSITION_MIN = 2;
 const ROOM_POSITION_MAX = 98;
 const ROOM_Z_INDEX_MIN = 1;
 const ROOM_Z_INDEX_MAX = 999;
+const OVERTIME_XP_PER_MINUTE = 2;
+const OVERTIME_COINS_PER_MINUTE = 3;
 
 type RoomSpriteConfig = {
   className: string;
@@ -932,8 +934,10 @@ export default function App() {
     }
 
     const key = adminPasscode.trim();
-    const [rosterOk, reflectionsOk] = await Promise.all([loadAdminRoster(key), loadAdminReflections(key)]);
-    if (!rosterOk || !reflectionsOk) return;
+    const rosterOk = await loadAdminRoster(key);
+    if (!rosterOk) return;
+    const reflectionsOk = await loadAdminReflections(key);
+    if (!reflectionsOk) return;
 
     setShowAdminPrompt(false);
     setAdminSection("roster");
@@ -949,7 +953,9 @@ export default function App() {
       setAdminError("Admin session expired. Re-open admin mode.");
       return;
     }
-    await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
+    const rosterOk = await loadAdminRoster(adminAccessKey);
+    if (!rosterOk) return;
+    await loadAdminReflections(adminAccessKey);
   };
 
   const handleDeleteStudent = async (studentId: number, nickname: string, classCode: string) => {
@@ -981,7 +987,10 @@ export default function App() {
         throw new Error(typeof data?.error === "string" ? data.error : `Delete failed: ${response.status}`);
       }
 
-      await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
+      const rosterOk = await loadAdminRoster(adminAccessKey);
+      if (rosterOk) {
+        await loadAdminReflections(adminAccessKey);
+      }
     } catch (err: any) {
       setAdminError(String(err?.message ?? err));
     } finally {
@@ -1018,7 +1027,10 @@ export default function App() {
         throw new Error(typeof data?.error === "string" ? data.error : `Delete failed: ${response.status}`);
       }
 
-      await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
+      const rosterOk = await loadAdminRoster(adminAccessKey);
+      if (rosterOk) {
+        await loadAdminReflections(adminAccessKey);
+      }
     } catch (err: any) {
       setAdminError(String(err?.message ?? err));
     } finally {
@@ -1061,7 +1073,10 @@ export default function App() {
         ...prev,
         [studentId]: "",
       }));
-      await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
+      const rosterOk = await loadAdminRoster(adminAccessKey);
+      if (rosterOk) {
+        await loadAdminReflections(adminAccessKey);
+      }
     } catch (err: any) {
       setAdminError(String(err?.message ?? err));
     } finally {
@@ -1111,7 +1126,10 @@ export default function App() {
       }
 
       setTeacherSetupResult(data as AdminCreateStudentsResponse);
-      await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
+      const rosterOk = await loadAdminRoster(adminAccessKey);
+      if (rosterOk) {
+        await loadAdminReflections(adminAccessKey);
+      }
     } catch (err: any) {
       setTeacherSetupError(String(err?.message ?? err));
     } finally {
@@ -1280,7 +1298,8 @@ export default function App() {
   const calculateXp = () => {
     const minutes = Math.floor(timerSeconds / 60);
     const pages = Math.max(0, endPage - startPage);
-    const sessionXp = (minutes * 1) + (pages * 5) + 20; // 20 base XP for finishing
+    const overtimeXpBonus = Math.max(0, minutes - safeGoalMinutes) * OVERTIME_XP_PER_MINUTE;
+    const sessionXp = (minutes * 1) + (pages * 5) + 20 + overtimeXpBonus; // 20 base XP for finishing
     return sessionXp;
   };
 
@@ -1399,6 +1418,7 @@ export default function App() {
       end_page: endPage,
       chapters_finished: chaptersFinished,
       duration_minutes: Math.floor(timerSeconds / 60),
+      goal_minutes: safeGoalMinutes,
       xp_earned: xp
     };
 
@@ -1434,6 +1454,8 @@ export default function App() {
         streak_multiplier: Number(rewardData.streak_multiplier ?? 1),
         coins_earned: Number(rewardData.coins_earned ?? 0),
         milestone_bonus_coins: Number(rewardData.milestone_bonus_coins ?? 0),
+        overtime_bonus_coins: Number(rewardData.overtime_bonus_coins ?? 0),
+        overtime_minutes: Number(rewardData.overtime_minutes ?? 0),
         milestones_reached: Number(rewardData.milestones_reached ?? 0),
       });
 
@@ -1552,6 +1574,10 @@ export default function App() {
       view === "bookshelf" &&
       showAppChrome
   );
+  const safeGoalMinutes = Math.max(1, targetMinutes);
+  const elapsedMinutes = Math.floor(timerSeconds / 60);
+  const overtimeMinutes = Math.max(0, elapsedMinutes - safeGoalMinutes);
+  const isPastGoalTime = timerSeconds > safeGoalMinutes * 60;
   const roomOwnedCount = roomState?.items.filter((item) => item.owned).length ?? 0;
   const roomEquippedCount = roomState?.items.filter((item) => item.equipped).length ?? 0;
   const roomUnlockedCount = roomState?.items.filter((item) => item.unlocked).length ?? 0;
@@ -2663,7 +2689,7 @@ export default function App() {
                     <input 
                       type="number" 
                       value={targetMinutes} 
-                      onChange={(e) => setTargetMinutes(parseNumberInput(e.target.value, 20))}
+                      onChange={(e) => setTargetMinutes(Math.max(1, parseNumberInput(e.target.value, 20)))}
                       className="w-12 bg-transparent font-bold text-xl focus:outline-none"
                     />
                     <span className="font-bold">min</span>
@@ -2716,6 +2742,15 @@ export default function App() {
             
             <h2 className="text-2xl font-bold mb-2">You're doing great!</h2>
             <p className="text-slate-500 mb-8">Keep exploring the world of {activeBook?.title}.</p>
+            {isPastGoalTime && (
+              <div className="mb-6 rounded-2xl border-2 border-emerald-200 bg-emerald-50 p-4 text-left">
+                <p className="font-bold text-emerald-800">Keep Reading for more XP!</p>
+                <p className="text-xs font-semibold text-emerald-700 mt-1">
+                  Bonus active: +{OVERTIME_XP_PER_MINUTE} XP and +{OVERTIME_COINS_PER_MINUTE} coins per extra minute.
+                </p>
+                <p className="text-xs font-bold text-emerald-800 mt-1">Extra full minutes so far: {overtimeMinutes}</p>
+              </div>
+            )}
             
             <button
               onClick={handleFinishReading}
@@ -2881,6 +2916,14 @@ export default function App() {
                   <span className="font-bold text-slate-400 uppercase text-xs">Milestone Bonus</span>
                   <span className="font-display font-bold text-xl text-sky-600">
                     +{sessionRewardSummary?.milestone_bonus_coins ?? 0}
+                  </span>
+                </div>
+              )}
+              {(sessionRewardSummary?.overtime_bonus_coins ?? 0) > 0 && (
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-bold text-slate-400 uppercase text-xs">Overtime Bonus</span>
+                  <span className="font-display font-bold text-xl text-emerald-600">
+                    +{sessionRewardSummary?.overtime_bonus_coins ?? 0}
                   </span>
                 </div>
               )}

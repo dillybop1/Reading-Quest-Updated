@@ -10,6 +10,7 @@ const MAX_REFLECTION_LENGTH = 4000;
 const STREAK_XP_BONUS_PER_DAY = 0.05;
 const STREAK_XP_BONUS_MAX = 0.5;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+const OVERTIME_COIN_REWARD_PER_MINUTE = 3;
 
 const parseReflectionEntries = (questions: unknown, answers: unknown) => {
   const questionList = Array.isArray(questions) ? questions : [];
@@ -129,6 +130,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         end_page,
         chapters_finished,
         duration_minutes,
+        goal_minutes,
         xp_earned,
         questions,
         answers,
@@ -140,6 +142,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         !Number.isFinite(end_page) ||
         !Number.isFinite(chapters_finished) ||
         !Number.isFinite(duration_minutes) ||
+        (goal_minutes != null && !Number.isFinite(goal_minutes)) ||
         !Number.isFinite(xp_earned)
       ) {
         return res.status(400).json({ error: "Invalid session payload" });
@@ -155,6 +158,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const streakDays = await touchStudentStreak(student.studentId);
       const streakMultiplier = getStreakXpMultiplier(streakDays);
+      const safeDurationMinutes = Math.max(0, Math.floor(Number(duration_minutes)));
+      const safeGoalMinutes =
+        goal_minutes == null ? safeDurationMinutes : Math.max(0, Math.floor(Number(goal_minutes)));
+      const overtimeMinutes = Math.max(0, safeDurationMinutes - safeGoalMinutes);
+      const overtimeBonusCoins = overtimeMinutes * OVERTIME_COIN_REWARD_PER_MINUTE;
       const submittedXp = Math.max(0, Math.floor(Number(xp_earned)));
       const boostedXpEarned = Math.max(0, Math.round(submittedXp * streakMultiplier));
 
@@ -163,7 +171,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
          (book_id, student_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned)
          VALUES ($1,$2,$3,$4,$5,$6,$7)
          RETURNING *`,
-        [book_id, student.studentId, start_page, end_page, chapters_finished, duration_minutes, boostedXpEarned]
+        [book_id, student.studentId, start_page, end_page, chapters_finished, safeDurationMinutes, boostedXpEarned]
       );
 
       const sessionId = session.rows[0]?.id;
@@ -204,11 +212,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       const previousTotalCoinsEarned = Number(statsBefore.rows[0]?.total_coins_earned ?? 0);
       const safeXpEarned = boostedXpEarned;
       const coinRewards = getSessionCoinRewards(previousXp, safeXpEarned);
+      const totalCoinsEarned = coinRewards.totalCoins + overtimeBonusCoins;
 
       const totalXp = previousXp + safeXpEarned;
       const newLevel = Math.floor(totalXp / XP_PER_LEVEL) + 1;
-      const newCoins = previousCoins + coinRewards.totalCoins;
-      const newTotalCoinsEarned = previousTotalCoinsEarned + coinRewards.totalCoins;
+      const newCoins = previousCoins + totalCoinsEarned;
+      const newTotalCoinsEarned = previousTotalCoinsEarned + totalCoinsEarned;
 
       await query(
         `
@@ -227,8 +236,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         xp_earned: safeXpEarned,
         streak_days: streakDays,
         streak_multiplier: streakMultiplier,
-        coins_earned: coinRewards.totalCoins,
+        coins_earned: totalCoinsEarned,
         milestone_bonus_coins: coinRewards.milestoneCoins,
+        overtime_bonus_coins: overtimeBonusCoins,
+        overtime_minutes: overtimeMinutes,
         milestones_reached: coinRewards.milestonesCrossed,
       });
     }
