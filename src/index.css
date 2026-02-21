@@ -6,7 +6,26 @@
   --font-display: "Space Grotesk", sans-serif;
 }
 
+:root {
+  --app-font-size: clamp(13px, 0.36vw + 11.6px, 16px);
+}
+
+html {
+  font-size: var(--app-font-size);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
   background-color: #f6efe3;
   color: #1e293b;
   transition: background-color 200ms ease, color 200ms ease;
@@ -145,6 +164,7 @@ body.dark-mode {
 }
 
 .room-shell-active {
+  --room-item-scale: 1;
   position: relative;
   width: 100%;
   border-radius: 0;
@@ -629,14 +649,20 @@ body.dark-mode {
 
 .quest-card {
   @apply bg-white rounded-3xl border-4 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] p-6;
+  border-radius: clamp(1rem, 1.9vw, 1.5rem);
+  padding: clamp(1rem, 2vw, 1.5rem);
 }
 
 .quest-button {
   @apply bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold py-3 px-6 rounded-2xl border-b-4 border-amber-600 active:border-b-0 active:translate-y-1 transition-all;
+  border-radius: clamp(0.85rem, 1.8vw, 1rem);
+  padding: clamp(0.65rem, 1vw, 0.75rem) clamp(1rem, 2.2vw, 1.5rem);
 }
 
 .quest-input {
   @apply w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 focus:border-amber-400 focus:outline-none transition-colors;
+  border-radius: clamp(0.65rem, 1.4vw, 0.8rem);
+  padding: clamp(0.6rem, 0.9vw, 0.75rem) clamp(0.85rem, 1.6vw, 1rem);
 }
 
 .theme-dark {
@@ -856,7 +882,7 @@ body.dark-mode {
 
 .room-item-sprite {
   position: absolute;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(var(--room-item-scale));
   background-repeat: no-repeat;
   background-size: contain;
   background-position: center;
@@ -864,6 +890,24 @@ body.dark-mode {
   touch-action: none;
   user-select: none;
   filter: drop-shadow(0 5px 5px rgba(15, 23, 42, 0.18));
+}
+
+@media (max-width: 1280px) {
+  .room-shell-active {
+    --room-item-scale: 0.9;
+  }
+}
+
+@media (max-width: 1024px) {
+  .room-shell-active {
+    --room-item-scale: 0.82;
+  }
+}
+
+@media (max-width: 768px) {
+  .room-shell-active {
+    --room-item-scale: 0.74;
+  }
 }
 
 .room-item-sprite.is-editable {
@@ -1129,6 +1173,10 @@ body.dark-mode {
 }
 
 @media (max-width: 640px) {
+  .room-shell-active {
+    --room-item-scale: 1;
+  }
+
   .room-layer-bookshelf {
     background-size: 150px auto, cover;
     background-position: right -8px bottom 20%, center;

@@ -1327,15 +1327,15 @@ export default function App() {
   const canEditRoomLayout = isRoomCustomizeMode && view === "room";
   const showAppChrome = !canEditRoomLayout;
   const appShellClassName = showRoomShell
-    ? "h-screen w-full room-shell-active overflow-hidden"
+    ? "min-h-screen min-h-[100dvh] w-full room-shell-active overflow-hidden"
     : "min-h-screen p-4 md:p-8 max-w-2xl mx-auto";
   const contentShellClassName = showRoomShell
     ? canEditRoomLayout
-      ? "room-content-layer h-full pointer-events-none"
-      : "room-content-layer max-w-2xl mx-auto p-3 md:p-4 h-full flex flex-col"
+      ? "room-content-layer min-h-screen min-h-[100dvh] pointer-events-none"
+      : "room-content-layer max-w-2xl mx-auto p-3 md:p-4 min-h-screen min-h-[100dvh] flex flex-col"
     : "";
   const mainAreaClassName = showRoomShell
-    ? "flex-1 min-h-0"
+    ? "flex-1 min-h-0 overflow-y-auto pr-1"
     : "";
   const showFooterStats = Boolean(
     stats &&
@@ -2242,7 +2242,7 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
                 <div className="bg-sky-50 p-4 rounded-2xl border-2 border-sky-100">
                   <div className="flex items-center gap-2 text-sky-600 mb-1">
                     <Clock className="w-4 h-4" />
@@ -2291,7 +2291,7 @@ export default function App() {
               <motion.div 
                 animate={{ scale: [1, 1.05, 1] }}
                 transition={{ repeat: Infinity, duration: 2 }}
-                className="w-48 h-48 rounded-full border-8 border-amber-400 flex items-center justify-center bg-amber-50"
+                className="w-36 h-36 sm:w-44 sm:h-44 lg:w-48 lg:h-48 rounded-full border-8 border-amber-400 flex items-center justify-center bg-amber-50"
               >
                 <div>
                   <p className="text-4xl font-display font-bold">
@@ -2305,7 +2305,10 @@ export default function App() {
             <h2 className="text-2xl font-bold mb-2">You're doing great!</h2>
             <p className="text-slate-500 mb-8">Keep exploring the world of {activeBook?.title}.</p>
             
-            <button onClick={handleFinishReading} className="quest-button bg-emerald-400 border-emerald-600 hover:bg-emerald-500 px-12">
+            <button
+              onClick={handleFinishReading}
+              className="quest-button bg-emerald-400 border-emerald-600 hover:bg-emerald-500 w-full sm:w-auto px-6 sm:px-12"
+            >
               I'm Finished!
             </button>
           </motion.div>
@@ -2321,7 +2324,7 @@ export default function App() {
           >
             <h2 className="text-2xl font-bold mb-6">Great Reading! 📚</h2>
             <form onSubmit={handleSummarySubmit} className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-bold mb-1">Started on Page</label>
                   <input 
@@ -2475,7 +2478,7 @@ export default function App() {
               </div>
             </div>
 
-            <button onClick={() => setView("bookshelf")} className="quest-button px-12">
+            <button onClick={() => setView("bookshelf")} className="quest-button w-full sm:w-auto px-6 sm:px-12">
               Back to Bookshelf
             </button>
           </motion.div>
@@ -2551,4 +2554,3 @@ export default function App() {
     </div>
   );
 }
-
