@@ -23,3 +23,33 @@ export interface ReadingSession {
   duration_minutes: number;
   xp_earned: number;
 }
+
+export interface StudentIdentity {
+  class_code: string;
+  nickname: string;
+}
+
+export interface AdminClassSummary {
+  class_code: string;
+  student_count: number;
+}
+
+export interface AdminStudentRow {
+  id: number;
+  class_code: string;
+  nickname: string;
+  created_at: string;
+  total_xp: number;
+  level: number;
+  total_sessions: number;
+  total_minutes: number;
+  active_book: string | null;
+  current_page: number | null;
+  total_pages: number | null;
+}
+
+export interface AdminRosterResponse {
+  classes: AdminClassSummary[];
+  students: AdminStudentRow[];
+  generated_at: string;
+}

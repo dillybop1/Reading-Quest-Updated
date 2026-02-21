@@ -1,19 +1,35 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { query } from "./_db.js";
+import { resolveStudent } from "./_student.js";
 
-export default async function handler(_req: VercelRequest, res: VercelResponse) {
+export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
-    const result = await query("SELECT * FROM user_stats ORDER BY id ASC LIMIT 1");
-
-    if (result.rows.length === 0) {
-      const insert = await query(
-        "INSERT INTO user_stats (total_xp, level) VALUES ($1, $2) RETURNING *",
-        [0, 1]
-      );
-      return res.status(200).json(insert.rows[0]);
+    const student = await resolveStudent(req);
+    if ("error" in student) {
+      return res.status(400).json({ error: student.error });
     }
 
-    return res.status(200).json(result.rows[0]);
+    const [statsResult, sessionsResult, minutesResult, booksResult] = await Promise.all([
+      query("SELECT * FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1", [student.studentId]),
+      query("SELECT COUNT(*)::int AS count FROM sessions WHERE student_id = $1", [student.studentId]),
+      query("SELECT COALESCE(SUM(duration_minutes), 0)::int AS total FROM sessions WHERE student_id = $1", [student.studentId]),
+      query("SELECT COUNT(*)::int AS count FROM books WHERE student_id = $1", [student.studentId]),
+    ]);
+
+    const stats = statsResult.rows[0] ?? {
+      total_xp: 0,
+      level: 1,
+    };
+    const totalSessions = sessionsResult.rows[0]?.count ?? 0;
+    const totalMinutes = minutesResult.rows[0]?.total ?? 0;
+    const totalBooks = booksResult.rows[0]?.count ?? 0;
+
+    return res.status(200).json({
+      ...stats,
+      total_sessions: totalSessions,
+      total_hours: Math.round((totalMinutes / 60) * 10) / 10,
+      total_books: totalBooks,
+    });
   } catch (err: any) {
     console.error(err);
     res.status(500).json({ error: String(err?.message ?? err) });
