@@ -49,6 +49,20 @@ db.exec(`
     level INTEGER DEFAULT 1,
     FOREIGN KEY(student_id) REFERENCES students(id)
   );
+
+  CREATE TABLE IF NOT EXISTS session_reflections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER,
+    student_id INTEGER,
+    book_id INTEGER,
+    question_index INTEGER,
+    question_text TEXT,
+    answer_text TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(session_id) REFERENCES sessions(id),
+    FOREIGN KEY(student_id) REFERENCES students(id),
+    FOREIGN KEY(book_id) REFERENCES books(id)
+  );
 `);
 
 const hasColumn = (table: string, column: string) => {
@@ -71,6 +85,13 @@ ensureColumn("sessions", "timestamp", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 ensureColumn("sessions", "xp_earned", "INTEGER");
 ensureColumn("user_stats", "total_xp", "INTEGER DEFAULT 0");
 ensureColumn("user_stats", "level", "INTEGER DEFAULT 1");
+ensureColumn("session_reflections", "session_id", "INTEGER");
+ensureColumn("session_reflections", "student_id", "INTEGER");
+ensureColumn("session_reflections", "book_id", "INTEGER");
+ensureColumn("session_reflections", "question_index", "INTEGER");
+ensureColumn("session_reflections", "question_text", "TEXT");
+ensureColumn("session_reflections", "answer_text", "TEXT");
+ensureColumn("session_reflections", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_students_class_nickname ON students(class_code, nickname);
@@ -78,6 +99,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_books_student_id ON books(student_id);
   CREATE INDEX IF NOT EXISTS idx_books_student_active ON books(student_id, is_active);
   CREATE INDEX IF NOT EXISTS idx_sessions_student_id ON sessions(student_id);
+  CREATE INDEX IF NOT EXISTS idx_reflections_student_id ON session_reflections(student_id);
+  CREATE INDEX IF NOT EXISTS idx_reflections_session_id ON session_reflections(session_id);
 `);
 
 const XP_PER_LEVEL = 500;
@@ -98,6 +121,8 @@ type SessionPayload = {
   chapters_finished: number;
   duration_minutes: number;
   xp_earned: number;
+  questions?: string[];
+  answers?: string[];
 };
 
 const getStringValue = (value: unknown) => {
@@ -131,6 +156,31 @@ const parseNicknames = (value: unknown) => {
   }
 
   return [];
+};
+
+const MAX_REFLECTION_LENGTH = 4000;
+const parseReflectionEntries = (questions: unknown, answers: unknown) => {
+  const questionList = Array.isArray(questions) ? questions : [];
+  const answerList = Array.isArray(answers) ? answers : [];
+  const maxLen = Math.max(questionList.length, answerList.length);
+  const entries: Array<{ question_index: number; question_text: string; answer_text: string }> = [];
+
+  for (let i = 0; i < maxLen; i += 1) {
+    const questionRaw = questionList[i];
+    const answerRaw = answerList[i];
+    const questionText = typeof questionRaw === "string" ? questionRaw.trim() : "";
+    const answerText = typeof answerRaw === "string" ? answerRaw.trim() : "";
+
+    if (!questionText && !answerText) continue;
+
+    entries.push({
+      question_index: i,
+      question_text: (questionText || `Question ${i + 1}`).slice(0, MAX_REFLECTION_LENGTH),
+      answer_text: answerText.slice(0, MAX_REFLECTION_LENGTH),
+    });
+  }
+
+  return entries;
 };
 
 const toPositiveInt = (value: unknown) => {
@@ -253,6 +303,33 @@ async function startServer() {
     res.json(book || null);
   });
 
+  app.post("/api/books/active", (req, res) => {
+    const student = resolveStudent(req, res);
+    if (!student) return;
+
+    const bookId = toPositiveInt(req.body?.book_id);
+    if (!bookId) {
+      return res.status(400).json({ error: "Invalid book_id" });
+    }
+
+    const existing = db
+      .prepare("SELECT id FROM books WHERE id = ? AND student_id = ? LIMIT 1")
+      .get(bookId, student.studentId);
+
+    if (!existing) {
+      return res.status(404).json({ error: "Book not found for this student" });
+    }
+
+    db.prepare("UPDATE books SET is_active = 0 WHERE student_id = ? AND is_active = 1").run(student.studentId);
+    db.prepare("UPDATE books SET is_active = 1 WHERE id = ? AND student_id = ?").run(bookId, student.studentId);
+
+    const updated = db
+      .prepare("SELECT * FROM books WHERE id = ? AND student_id = ? LIMIT 1")
+      .get(bookId, student.studentId);
+
+    return res.json(updated || null);
+  });
+
   app.post("/api/books", (req, res) => {
     const student = resolveStudent(req, res);
     if (!student) return;
@@ -262,29 +339,54 @@ async function startServer() {
       return res.status(400).json({ error: "Missing/invalid title, author, total_pages" });
     }
 
-    db.prepare("UPDATE books SET is_active = 0 WHERE student_id = ?").run(student.studentId);
+    const existingActive = db
+      .prepare("SELECT id FROM books WHERE student_id = ? AND is_active = 1 LIMIT 1")
+      .get(student.studentId);
+    const shouldBeActive = !existingActive;
+
     const result = db
       .prepare(
-        "INSERT INTO books (title, author, total_pages, current_page, is_active, student_id) VALUES (?, ?, ?, 0, 1, ?)"
+        "INSERT INTO books (title, author, total_pages, current_page, is_active, student_id) VALUES (?, ?, ?, 0, ?, ?)"
       )
-      .run(title, author, total_pages, student.studentId);
+      .run(title, author, total_pages, shouldBeActive ? 1 : 0, student.studentId);
 
     res.json({ id: result.lastInsertRowid });
   });
 
   const runSessionTransaction = db.transaction((payload: SessionPayload, studentId: number) => {
-    db.prepare(
-      `INSERT INTO sessions (book_id, student_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      payload.book_id,
-      studentId,
-      payload.start_page,
-      payload.end_page,
-      payload.chapters_finished,
-      payload.duration_minutes,
-      payload.xp_earned
-    );
+    const sessionInsert = db
+      .prepare(
+        `INSERT INTO sessions (book_id, student_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        payload.book_id,
+        studentId,
+        payload.start_page,
+        payload.end_page,
+        payload.chapters_finished,
+        payload.duration_minutes,
+        payload.xp_earned
+      );
+    const sessionId = Number(sessionInsert.lastInsertRowid);
+
+    const reflectionEntries = parseReflectionEntries(payload.questions, payload.answers);
+    for (const entry of reflectionEntries) {
+      db.prepare(
+        `
+          INSERT INTO session_reflections
+          (session_id, student_id, book_id, question_index, question_text, answer_text)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `
+      ).run(
+        sessionId,
+        studentId,
+        payload.book_id,
+        entry.question_index,
+        entry.question_text,
+        entry.answer_text
+      );
+    }
 
     db.prepare("UPDATE books SET current_page = ? WHERE id = ? AND student_id = ?").run(
       payload.end_page,
@@ -300,13 +402,16 @@ async function startServer() {
     const newLevel = Math.floor((stats?.total_xp ?? 0) / XP_PER_LEVEL) + 1;
 
     db.prepare("UPDATE user_stats SET level = ? WHERE student_id = ?").run(newLevel, studentId);
+
+    return sessionId;
   });
 
   app.post("/api/sessions", (req, res) => {
     const student = resolveStudent(req, res);
     if (!student) return;
 
-    const { book_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned } = req.body as SessionPayload;
+    const { book_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned, questions, answers } =
+      req.body as SessionPayload;
 
     if (
       !Number.isFinite(book_id) ||
@@ -327,7 +432,7 @@ async function startServer() {
       return res.status(404).json({ error: "Book not found for this student" });
     }
 
-    runSessionTransaction(
+    const sessionId = runSessionTransaction(
       {
         book_id,
         start_page,
@@ -335,11 +440,13 @@ async function startServer() {
         chapters_finished,
         duration_minutes,
         xp_earned,
+        questions,
+        answers,
       },
       student.studentId
     );
 
-    res.json({ success: true });
+    res.json({ success: true, session_id: sessionId });
   });
 
   app.get("/api/admin/roster", (req, res) => {
@@ -407,6 +514,77 @@ async function startServer() {
     });
   });
 
+  app.get("/api/admin/reflections", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+
+    const rows = db
+      .prepare(
+        `
+        SELECT
+          sr.session_id,
+          s.timestamp,
+          st.class_code,
+          st.nickname,
+          b.title as book_title,
+          sr.question_index,
+          sr.question_text,
+          sr.answer_text
+        FROM session_reflections sr
+        JOIN sessions s ON s.id = sr.session_id
+        JOIN students st ON st.id = sr.student_id
+        LEFT JOIN books b ON b.id = sr.book_id
+        ORDER BY s.timestamp DESC, sr.session_id DESC, sr.question_index ASC
+        LIMIT 1200
+      `
+      )
+      .all() as Array<{
+      session_id: number;
+      timestamp: string;
+      class_code: string;
+      nickname: string;
+      book_title: string | null;
+      question_index: number;
+      question_text: string;
+      answer_text: string;
+    }>;
+
+    const bySession = new Map<
+      number,
+      {
+        session_id: number;
+        timestamp: string;
+        class_code: string;
+        nickname: string;
+        book_title: string | null;
+        answers: Array<{ question_index: number; question_text: string; answer_text: string }>;
+      }
+    >();
+
+    for (const row of rows) {
+      if (!bySession.has(row.session_id)) {
+        bySession.set(row.session_id, {
+          session_id: row.session_id,
+          timestamp: row.timestamp,
+          class_code: row.class_code,
+          nickname: row.nickname,
+          book_title: row.book_title ?? null,
+          answers: [],
+        });
+      }
+
+      bySession.get(row.session_id)!.answers.push({
+        question_index: row.question_index ?? 0,
+        question_text: row.question_text ?? "",
+        answer_text: row.answer_text ?? "",
+      });
+    }
+
+    res.json({
+      reflections: Array.from(bySession.values()),
+      generated_at: new Date().toISOString(),
+    });
+  });
+
   app.post("/api/admin/students", (req, res) => {
     if (!requireAdmin(req, res)) return;
 
@@ -465,6 +643,7 @@ async function startServer() {
     }
 
     const deleteStudentData = db.transaction((id: number) => {
+      const deletedReflections = db.prepare("DELETE FROM session_reflections WHERE student_id = ?").run(id).changes;
       const deletedSessions = db.prepare("DELETE FROM sessions WHERE student_id = ?").run(id).changes;
       const deletedBooks = db.prepare("DELETE FROM books WHERE student_id = ?").run(id).changes;
       const deletedStats = db.prepare("DELETE FROM user_stats WHERE student_id = ?").run(id).changes;
@@ -472,6 +651,7 @@ async function startServer() {
 
       return {
         deleted_students: deletedStudents,
+        deleted_reflections: deletedReflections,
         deleted_sessions: deletedSessions,
         deleted_books: deletedBooks,
         deleted_stats: deletedStats,
@@ -499,6 +679,7 @@ async function startServer() {
         return {
           class_code: code,
           deleted_students: 0,
+          deleted_reflections: 0,
           deleted_sessions: 0,
           deleted_books: 0,
           deleted_stats: 0,
@@ -506,6 +687,9 @@ async function startServer() {
       }
 
       const placeholders = ids.map(() => "?").join(",");
+      const deletedReflections = db
+        .prepare(`DELETE FROM session_reflections WHERE student_id IN (${placeholders})`)
+        .run(...ids).changes;
       const deletedSessions = db
         .prepare(`DELETE FROM sessions WHERE student_id IN (${placeholders})`)
         .run(...ids).changes;
@@ -522,6 +706,7 @@ async function startServer() {
       return {
         class_code: code,
         deleted_students: deletedStudents,
+        deleted_reflections: deletedReflections,
         deleted_sessions: deletedSessions,
         deleted_books: deletedBooks,
         deleted_stats: deletedStats,

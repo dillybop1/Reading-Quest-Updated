@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { 
   BookOpen, 
   Timer, 
@@ -10,7 +10,6 @@ import {
   Book as BookIcon,
   Clock,
   Flame,
-  XCircle,
   Shield,
   RefreshCw,
   Trash2,
@@ -25,16 +24,20 @@ import {
   StudentIdentity,
   AdminRosterResponse,
   AdminCreateStudentsResponse,
+  AdminReflectionsResponse,
 } from "./types";
 
 const STUDENT_STORAGE_KEY = "reading-quest-student";
 const THEME_STORAGE_KEY = "reading-quest-theme";
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
+const BOOK_SPINE_COLORS = ["#f59e0b", "#0ea5e9", "#22c55e", "#ef4444", "#14b8a6", "#f97316"];
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [books, setBooks] = useState<Book[]>([]);
   const [activeBook, setActiveBook] = useState<Book | null>(null);
+  const [showAddBookForm, setShowAddBookForm] = useState(false);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [student, setStudent] = useState<StudentIdentity | null>(null);
   const [classCodeInput, setClassCodeInput] = useState("");
@@ -45,18 +48,22 @@ export default function App() {
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminRoster, setAdminRoster] = useState<AdminRosterResponse | null>(null);
   const [isAdminLoading, setIsAdminLoading] = useState(false);
-  const [adminSection, setAdminSection] = useState<"roster" | "teacher">("roster");
+  const [adminSection, setAdminSection] = useState<"roster" | "teacher" | "responses">("roster");
   const [teacherClassCodeInput, setTeacherClassCodeInput] = useState("");
   const [teacherNicknamesInput, setTeacherNicknamesInput] = useState("");
   const [teacherSetupError, setTeacherSetupError] = useState<string | null>(null);
   const [teacherSetupResult, setTeacherSetupResult] = useState<AdminCreateStudentsResponse | null>(null);
   const [isTeacherSetupSaving, setIsTeacherSetupSaving] = useState(false);
+  const [adminReflections, setAdminReflections] = useState<AdminReflectionsResponse | null>(null);
+  const [responsesSearchInput, setResponsesSearchInput] = useState("");
+  const [responsesClassFilter, setResponsesClassFilter] = useState("all");
+  const [responsesStudentFilter, setResponsesStudentFilter] = useState("all");
   const [deleteBusyKey, setDeleteBusyKey] = useState<string | null>(null);
   const [adminTapCount, setAdminTapCount] = useState(0);
   const adminTapResetRef = useRef<NodeJS.Timeout | null>(null);
   const [adminAccessKey, setAdminAccessKey] = useState<string | null>(null);
   const [view, setView] = useState<
-    "loading" | "student" | "admin" | "setup" | "dashboard" | "reading" | "summary" | "questions" | "celebration"
+    "loading" | "student" | "admin" | "setup" | "bookshelf" | "dashboard" | "reading" | "summary" | "questions" | "celebration"
   >("loading");
   
   // Reading Session State
@@ -132,6 +139,113 @@ export default function App() {
     return Number.isNaN(parsed) ? fallback : parsed;
   };
 
+  const getBookProgressPercent = (book: Book) => {
+    if (!book.total_pages) return 0;
+    return Math.max(0, Math.min(100, Math.round((book.current_page / book.total_pages) * 100)));
+  };
+
+  const getStudentFilterKey = (classCode: string, nickname: string) => `${classCode}::${nickname}`;
+
+  const getTimestampValue = (timestamp: string) => {
+    const value = new Date(timestamp).getTime();
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  const adminReflectionSessions = adminReflections?.reflections ?? [];
+
+  const responseClassOptions = useMemo(() => {
+    const classCodes: string[] = adminReflectionSessions.map((session) => String(session.class_code ?? ""));
+    return Array.from(new Set<string>(classCodes))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  }, [adminReflectionSessions]);
+
+  const responseStudentOptions = useMemo(() => {
+    const filteredByClass =
+      responsesClassFilter === "all"
+        ? adminReflectionSessions
+        : adminReflectionSessions.filter((session) => session.class_code === responsesClassFilter);
+
+    const unique = new Map<string, { key: string; label: string }>();
+    for (const session of filteredByClass) {
+      const key = getStudentFilterKey(session.class_code, session.nickname);
+      if (!unique.has(key)) {
+        unique.set(key, {
+          key,
+          label: `${session.nickname} (${session.class_code})`,
+        });
+      }
+    }
+
+    return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [adminReflectionSessions, responsesClassFilter]);
+
+  const filteredReflectionSessions = useMemo(() => {
+    const search = responsesSearchInput.trim().toLowerCase();
+
+    return adminReflectionSessions.filter((session) => {
+      if (responsesClassFilter !== "all" && session.class_code !== responsesClassFilter) return false;
+
+      if (responsesStudentFilter !== "all") {
+        const sessionKey = getStudentFilterKey(session.class_code, session.nickname);
+        if (sessionKey !== responsesStudentFilter) return false;
+      }
+
+      if (!search) return true;
+
+      const basicText = `${session.nickname} ${session.class_code} ${session.book_title ?? ""}`.toLowerCase();
+      if (basicText.includes(search)) return true;
+
+      return session.answers.some((entry) => {
+        const questionText = entry.question_text?.toLowerCase() ?? "";
+        const answerText = entry.answer_text?.toLowerCase() ?? "";
+        return questionText.includes(search) || answerText.includes(search);
+      });
+    });
+  }, [adminReflectionSessions, responsesClassFilter, responsesStudentFilter, responsesSearchInput]);
+
+  const groupedReflectionSessions = useMemo(() => {
+    const byStudent = new Map<
+      string,
+      {
+        class_code: string;
+        nickname: string;
+        latest_timestamp: string;
+        sessions: typeof filteredReflectionSessions;
+      }
+    >();
+
+    for (const session of filteredReflectionSessions) {
+      const key = getStudentFilterKey(session.class_code, session.nickname);
+      if (!byStudent.has(key)) {
+        byStudent.set(key, {
+          class_code: session.class_code,
+          nickname: session.nickname,
+          latest_timestamp: session.timestamp,
+          sessions: [],
+        });
+      }
+
+      const current = byStudent.get(key)!;
+      current.sessions.push(session);
+      if (getTimestampValue(session.timestamp) > getTimestampValue(current.latest_timestamp)) {
+        current.latest_timestamp = session.timestamp;
+      }
+    }
+
+    return Array.from(byStudent.values()).sort(
+      (a, b) => getTimestampValue(b.latest_timestamp) - getTimestampValue(a.latest_timestamp)
+    );
+  }, [filteredReflectionSessions]);
+
+  useEffect(() => {
+    if (responsesStudentFilter === "all") return;
+    const stillValid = responseStudentOptions.some((option) => option.key === responsesStudentFilter);
+    if (!stillValid) {
+      setResponsesStudentFilter("all");
+    }
+  }, [responseStudentOptions, responsesStudentFilter]);
+
   const normalizeClassCode = (value: string) => value.trim().toUpperCase();
   const normalizeNickname = (value: string) => value.trim();
 
@@ -191,6 +305,36 @@ export default function App() {
     }
   };
 
+  const loadAdminReflections = async (key: string) => {
+    try {
+      const response = await fetch("/api/admin/reflections", {
+        headers: {
+          "x-admin-key": key,
+        },
+      });
+
+      if (!response.ok) {
+        let message = `Failed to load reflections: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          if (typeof errorBody?.error === "string") {
+            message = errorBody.error;
+          }
+        } catch {
+          // Ignore JSON parse failure and use default message.
+        }
+        throw new Error(message);
+      }
+
+      const data = (await response.json()) as AdminReflectionsResponse;
+      setAdminReflections(data);
+      return true;
+    } catch (err: any) {
+      setAdminError(String(err?.message ?? err));
+      return false;
+    }
+  };
+
   const handleHiddenAdminTap = () => {
     setAdminTapCount((prev) => {
       const next = prev + 1;
@@ -214,8 +358,9 @@ export default function App() {
       return;
     }
 
-    const success = await loadAdminRoster(adminPasscode.trim());
-    if (!success) return;
+    const key = adminPasscode.trim();
+    const [rosterOk, reflectionsOk] = await Promise.all([loadAdminRoster(key), loadAdminReflections(key)]);
+    if (!rosterOk || !reflectionsOk) return;
 
     setShowAdminPrompt(false);
     setAdminSection("roster");
@@ -229,7 +374,7 @@ export default function App() {
       setAdminError("Admin session expired. Re-open admin mode.");
       return;
     }
-    await loadAdminRoster(adminAccessKey);
+    await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
   };
 
   const handleDeleteStudent = async (studentId: number, nickname: string, classCode: string) => {
@@ -261,7 +406,7 @@ export default function App() {
         throw new Error(typeof data?.error === "string" ? data.error : `Delete failed: ${response.status}`);
       }
 
-      await loadAdminRoster(adminAccessKey);
+      await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
     } catch (err: any) {
       setAdminError(String(err?.message ?? err));
     } finally {
@@ -298,7 +443,7 @@ export default function App() {
         throw new Error(typeof data?.error === "string" ? data.error : `Delete failed: ${response.status}`);
       }
 
-      await loadAdminRoster(adminAccessKey);
+      await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
     } catch (err: any) {
       setAdminError(String(err?.message ?? err));
     } finally {
@@ -348,7 +493,7 @@ export default function App() {
       }
 
       setTeacherSetupResult(data as AdminCreateStudentsResponse);
-      await loadAdminRoster(adminAccessKey);
+      await Promise.all([loadAdminRoster(adminAccessKey), loadAdminReflections(adminAccessKey)]);
     } catch (err: any) {
       setTeacherSetupError(String(err?.message ?? err));
     } finally {
@@ -359,7 +504,7 @@ export default function App() {
   const handleExitAdmin = () => {
     setShowAdminPrompt(false);
     setAdminError(null);
-    setView(student ? (activeBook ? "dashboard" : "setup") : "student");
+    setView(student ? (books.length > 0 ? "bookshelf" : "setup") : "student");
   };
 
   const fetchInitialData = async () => {
@@ -369,26 +514,48 @@ export default function App() {
     }
 
     try {
-      const [bookResult, statsResult] = await Promise.allSettled([
+      const [booksResult, activeBookResult, statsResult] = await Promise.allSettled([
+        fetch(withStudentQuery("/api/books")),
         fetch(withStudentQuery("/api/books/active")),
         fetch(withStudentQuery("/api/stats")),
       ]);
 
-      let bookData: Book | null = null;
+      let booksData: Book[] = [];
+      let activeBookData: Book | null = null;
       let statsData: UserStats | null = null;
 
-      if (bookResult.status === "fulfilled") {
-        if (bookResult.value.ok) {
-          bookData = await bookResult.value.json();
-          setActiveBook(bookData);
-          setStartPage(bookData?.current_page || 0);
-          setEndPage(bookData?.current_page || 0);
+      if (booksResult.status === "fulfilled") {
+        if (booksResult.value.ok) {
+          booksData = await booksResult.value.json();
+          setBooks(booksData);
         } else {
-          console.error(`books/active failed: ${bookResult.value.status}`);
+          console.error(`books failed: ${booksResult.value.status}`);
         }
       } else {
-        console.error("books/active request failed", bookResult.reason);
+        console.error("books request failed", booksResult.reason);
       }
+
+      if (activeBookResult.status === "fulfilled") {
+        if (activeBookResult.value.ok) {
+          activeBookData = await activeBookResult.value.json();
+        } else {
+          console.error(`books/active failed: ${activeBookResult.value.status}`);
+        }
+      } else {
+        console.error("books/active request failed", activeBookResult.reason);
+      }
+
+      if (!activeBookData && booksData.length > 0) {
+        activeBookData = booksData.find((book) => Boolean(book.is_active)) ?? booksData[0];
+      }
+      if (booksData.length === 0 && activeBookData) {
+        booksData = [activeBookData];
+        setBooks(booksData);
+      }
+
+      setActiveBook(activeBookData);
+      setStartPage(activeBookData?.current_page || 0);
+      setEndPage(activeBookData?.current_page || 0);
 
       if (statsResult.status === "fulfilled") {
         if (statsResult.value.ok) {
@@ -401,12 +568,12 @@ export default function App() {
         console.error("stats request failed", statsResult.reason);
       }
 
-      if (!bookData && !statsData) {
+      if (booksData.length === 0 && !statsData) {
         setView("setup");
         return;
       }
 
-      setView(bookData ? "dashboard" : "setup");
+      setView(booksData.length > 0 ? "bookshelf" : "setup");
     } catch (err) {
       console.error("Failed to fetch data", err);
       setView("setup");
@@ -414,6 +581,7 @@ export default function App() {
   };
 
   const handleStartSession = () => {
+    if (!activeBook) return;
     setTimerSeconds(0);
     setIsTimerRunning(true);
     setView("reading");
@@ -480,6 +648,10 @@ export default function App() {
     setAdminPasscode("");
     setAdminError(null);
     setAdminRoster(null);
+    setAdminReflections(null);
+    setResponsesSearchInput("");
+    setResponsesClassFilter("all");
+    setResponsesStudentFilter("all");
     setAdminAccessKey(null);
     setAdminSection("roster");
     setTeacherClassCodeInput("");
@@ -493,7 +665,9 @@ export default function App() {
     setClassCodeInput("");
     setNicknameInput("");
     setStudentError(null);
+    setBooks([]);
     setActiveBook(null);
+    setShowAddBookForm(false);
     setStats(null);
     setAnswers([]);
     setCurrentQuestionIndex(0);
@@ -524,6 +698,8 @@ export default function App() {
 
     const xp = calculateXp();
     setEarnedXp(xp);
+    const questions = getQuestions();
+    const sanitizedAnswers = questions.map((_, index) => (answers[index] || "").trim());
 
     const sessionData: ReadingSession = {
       book_id: activeBook.id,
@@ -536,6 +712,8 @@ export default function App() {
 
     const payload = {
       ...sessionData,
+      questions,
+      answers: sanitizedAnswers,
       class_code: student.class_code,
       nickname: student.nickname,
     };
@@ -556,6 +734,13 @@ export default function App() {
           ? { ...prev, current_page: sessionData.end_page }
           : prev
       );
+      setBooks(prev =>
+        prev.map(book =>
+          book.id === sessionData.book_id
+            ? { ...book, current_page: sessionData.end_page }
+            : book
+        )
+      );
 
       await fetchInitialData();
       setView("celebration");
@@ -572,7 +757,7 @@ export default function App() {
     const bookData = {
       title: formData.get("title"),
       author: formData.get("author"),
-      total_pages: parseInt(formData.get("pages") as string),
+      total_pages: parseNumberInput(formData.get("pages") as string),
       class_code: student.class_code,
       nickname: student.nickname,
     };
@@ -586,9 +771,50 @@ export default function App() {
       if (!response.ok) {
         throw new Error(`Failed to create book: ${response.status}`);
       }
+      setShowAddBookForm(false);
       await fetchInitialData();
     } catch (err) {
       console.error("Failed to create book", err);
+    }
+  };
+
+  const handleSelectBook = async (book: Book) => {
+    if (!student) return;
+
+    setActiveBook(book);
+    setStartPage(book.current_page || 0);
+    setEndPage(book.current_page || 0);
+    setView("dashboard");
+
+    try {
+      const response = await fetch("/api/books/active", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          book_id: book.id,
+          class_code: student.class_code,
+          nickname: student.nickname,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to select book: ${response.status}`);
+      }
+
+      const updatedBook = await response.json();
+      if (updatedBook) {
+        setActiveBook(updatedBook);
+      }
+
+      setBooks(prev =>
+        prev.map(item => ({
+          ...item,
+          is_active: item.id === book.id ? 1 : 0,
+        }))
+      );
+    } catch (err) {
+      console.error("Failed to select active book", err);
+      await fetchInitialData();
     }
   };
 
@@ -786,6 +1012,17 @@ export default function App() {
                   </button>
                   <button
                     type="button"
+                    onClick={() => setAdminSection("responses")}
+                    className={`py-2 px-4 rounded-xl border-2 font-bold text-sm ${
+                      adminSection === "responses"
+                        ? "border-slate-900 bg-emerald-200 text-slate-900"
+                        : "border-slate-200 bg-white text-slate-500"
+                    }`}
+                  >
+                    Responses
+                  </button>
+                  <button
+                    type="button"
                     onClick={handleAdminRefresh}
                     disabled={isAdminLoading}
                     className="py-2 px-4 rounded-xl border-2 border-slate-900 bg-slate-100 font-bold text-sm disabled:opacity-50 flex items-center gap-2"
@@ -806,7 +1043,13 @@ export default function App() {
               {adminError && <p className="text-sm text-rose-600 font-medium">{adminError}</p>}
               {!adminError && (
                 <p className="text-sm text-slate-500">
-                  {isAdminLoading ? "Loading..." : `Last updated: ${adminRoster?.generated_at ?? "just now"}`}
+                  {isAdminLoading
+                    ? "Loading..."
+                    : `Last updated: ${
+                        adminSection === "responses"
+                          ? adminReflections?.generated_at ?? "just now"
+                          : adminRoster?.generated_at ?? "just now"
+                      }`}
                 </p>
               )}
             </div>
@@ -955,6 +1198,149 @@ export default function App() {
                 </form>
               </div>
             )}
+
+            {adminSection === "responses" && (
+              <div className="space-y-4">
+                <div className="quest-card">
+                  <h3 className="font-bold text-lg mb-2">Post-Reading Responses</h3>
+                  <p className="text-slate-500">
+                    View students&apos; submitted answers from their reading sessions.
+                  </p>
+                </div>
+
+                {adminReflectionSessions.length ? (
+                  <>
+                    <div className="quest-card border-2 border-emerald-200 bg-emerald-50/40">
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <input
+                          value={responsesSearchInput}
+                          onChange={(e) => setResponsesSearchInput(e.target.value)}
+                          className="quest-input md:col-span-2"
+                          placeholder="Search student, class, book, or response text"
+                        />
+                        <select
+                          value={responsesClassFilter}
+                          onChange={(e) => setResponsesClassFilter(e.target.value)}
+                          className="quest-input"
+                        >
+                          <option value="all">All classes</option>
+                          {responseClassOptions.map((classCode) => (
+                            <option key={classCode} value={classCode}>
+                              {classCode}
+                            </option>
+                          ))}
+                        </select>
+                        <select
+                          value={responsesStudentFilter}
+                          onChange={(e) => setResponsesStudentFilter(e.target.value)}
+                          className="quest-input"
+                        >
+                          <option value="all">All students</option>
+                          {responseStudentOptions.map((studentOption) => (
+                            <option key={studentOption.key} value={studentOption.key}>
+                              {studentOption.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm text-emerald-800 font-medium">
+                          Showing {filteredReflectionSessions.length} session
+                          {filteredReflectionSessions.length === 1 ? "" : "s"} across {groupedReflectionSessions.length} student
+                          {groupedReflectionSessions.length === 1 ? "" : "s"}.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResponsesSearchInput("");
+                            setResponsesClassFilter("all");
+                            setResponsesStudentFilter("all");
+                          }}
+                          className="px-3 py-1 rounded-lg border border-emerald-300 text-emerald-700 hover:bg-emerald-100 text-sm font-bold"
+                        >
+                          Clear Filters
+                        </button>
+                      </div>
+                    </div>
+
+                    {groupedReflectionSessions.length ? (
+                      <div className="space-y-4">
+                        {groupedReflectionSessions.map((studentGroup) => (
+                          <div
+                            key={getStudentFilterKey(studentGroup.class_code, studentGroup.nickname)}
+                            className="quest-card border-2 border-slate-200"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <p className="font-bold text-slate-900">
+                                  {studentGroup.nickname}{" "}
+                                  <span className="text-slate-500 font-semibold">({studentGroup.class_code})</span>
+                                </p>
+                                <p className="text-xs text-slate-500">
+                                  {studentGroup.sessions.length} reading session
+                                  {studentGroup.sessions.length === 1 ? "" : "s"}
+                                </p>
+                              </div>
+                              <p className="text-xs text-slate-500">
+                                Latest: {new Date(studentGroup.latest_timestamp).toLocaleString()}
+                              </p>
+                            </div>
+
+                            <div className="mt-3 space-y-2">
+                              {studentGroup.sessions.map((session, index) => (
+                                <details
+                                  key={session.session_id}
+                                  open={index === 0}
+                                  className="rounded-xl border border-slate-200 bg-slate-50"
+                                >
+                                  <summary className="cursor-pointer list-none px-4 py-3 flex flex-wrap justify-between items-center gap-2">
+                                    <div>
+                                      <p className="font-semibold text-slate-800">
+                                        {session.book_title ? session.book_title : "Unknown Book"}
+                                      </p>
+                                      <p className="text-xs text-slate-500">
+                                        {session.answers.length} answer{session.answers.length === 1 ? "" : "s"}
+                                      </p>
+                                    </div>
+                                    <p className="text-xs text-slate-500">{new Date(session.timestamp).toLocaleString()}</p>
+                                  </summary>
+
+                                  <div className="px-4 pb-4 space-y-2">
+                                    {session.answers.map((entry) => (
+                                      <div
+                                        key={`${session.session_id}-${entry.question_index}`}
+                                        className="rounded-lg border border-emerald-200 bg-white p-3"
+                                      >
+                                        <p className="text-xs uppercase tracking-wide text-emerald-700 font-bold mb-1">
+                                          Question {entry.question_index + 1}
+                                        </p>
+                                        <p className="text-sm font-medium text-slate-800">{entry.question_text}</p>
+                                        <p className="text-sm text-slate-700 mt-1 whitespace-pre-wrap">
+                                          {entry.answer_text || "(No answer submitted)"}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </details>
+                              ))}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="quest-card">
+                        <p className="text-slate-500">No response sessions match those filters.</p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="quest-card">
+                    <p className="text-slate-500">No post-reading responses have been submitted yet.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </motion.div>
         )}
 
@@ -967,7 +1353,7 @@ export default function App() {
             className="quest-card"
           >
             <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-              <Plus className="text-amber-500" /> Start a New Book!
+              <Plus className="text-amber-500" /> Add Your First Book to Your Bookshelf!
             </h2>
             <form onSubmit={handleNewBook} className="space-y-4">
               <div>
@@ -989,6 +1375,79 @@ export default function App() {
           </motion.div>
         )}
 
+        {view === "bookshelf" && (
+          <motion.div 
+            key="bookshelf"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="space-y-6"
+          >
+            <div className="quest-card">
+              <div className="flex flex-wrap justify-between items-start gap-3 mb-4">
+                <div>
+                  <h2 className="text-2xl font-bold">My Bookshelf</h2>
+                  <p className="text-slate-500 font-medium">Choose a book spine to make it your current quest.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddBookForm((prev) => !prev)}
+                  className="quest-button px-4 py-2 text-sm flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  {showAddBookForm ? "Close" : "Add to Bookshelf"}
+                </button>
+              </div>
+
+              {showAddBookForm && (
+                <form onSubmit={handleNewBook} className="space-y-3 mb-5 p-4 rounded-2xl border-2 border-slate-200 bg-slate-50">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <input name="title" required className="quest-input" placeholder="Book title" />
+                    <input name="author" required className="quest-input" placeholder="Author" />
+                    <input name="pages" type="number" min={1} required className="quest-input" placeholder="Total pages" />
+                  </div>
+                  <button type="submit" className="quest-button w-full md:w-auto">
+                    Add Book
+                  </button>
+                </form>
+              )}
+
+              {books.length > 0 ? (
+                <div className="bookshelf-wrap">
+                  <div className="bookshelf-stack">
+                    {books.map((book, index) => {
+                      const progressPercent = getBookProgressPercent(book);
+                      const isSelected = activeBook?.id === book.id;
+                      return (
+                        <button
+                          key={book.id}
+                          type="button"
+                          onClick={() => handleSelectBook(book)}
+                          className={`book-spine ${isSelected ? "selected" : ""}`}
+                          style={{
+                            backgroundColor: BOOK_SPINE_COLORS[index % BOOK_SPINE_COLORS.length],
+                            zIndex: books.length - index,
+                          }}
+                        >
+                          <span className="book-spine-topline">
+                            {book.title}
+                          </span>
+                          <span className="book-spine-progress">
+                            {progressPercent}%  {book.current_page}/{book.total_pages} Pages
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <div className="bookshelf-board" />
+                </div>
+              ) : (
+                <p className="text-slate-500 font-medium">No books yet. Add one to start your shelf.</p>
+              )}
+            </div>
+          </motion.div>
+        )}
+
         {view === "dashboard" && activeBook && (
           <motion.div 
             key="dashboard"
@@ -998,37 +1457,35 @@ export default function App() {
             className="space-y-6"
           >
             <div className="quest-card">
-              <div className="flex justify-between items-start mb-4">
+              <div className="flex items-start justify-between gap-3 mb-5">
                 <div>
-                  <h2 className="text-2xl font-bold">{activeBook.title}</h2>
+                  <h3 className="text-2xl font-bold">{activeBook.title}</h3>
                   <p className="text-slate-500 font-medium">by {activeBook.author}</p>
                 </div>
-                <button 
-                  onClick={() => setView("setup")}
-                  className="p-2 hover:bg-slate-100 rounded-lg transition-colors text-slate-400"
-                  title="Change Book"
+                <button
+                  type="button"
+                  onClick={() => setView("bookshelf")}
+                  className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
                 >
-                  <XCircle className="w-6 h-6" />
+                  Back to Bookshelf
                 </button>
               </div>
-              
               <div className="mb-6">
                 <div className="flex justify-between text-sm font-bold mb-2">
                   <span>Progress</span>
-                  <span>{Math.round((activeBook.current_page / activeBook.total_pages) * 100)}%</span>
+                  <span>{getBookProgressPercent(activeBook)}%</span>
                 </div>
                 <div className="h-6 bg-slate-100 rounded-xl border-2 border-slate-900 overflow-hidden relative">
                   <motion.div 
                     className="h-full bg-emerald-400"
                     initial={{ width: 0 }}
-                    animate={{ width: `${(activeBook.current_page / activeBook.total_pages) * 100}%` }}
+                    animate={{ width: `${getBookProgressPercent(activeBook)}%` }}
                   />
                   <div className="absolute inset-0 flex items-center justify-center text-[10px] font-bold uppercase tracking-widest">
-                    Page {activeBook.current_page} of {activeBook.total_pages}
+                    {activeBook.current_page}/{activeBook.total_pages} Pages
                   </div>
                 </div>
               </div>
-
               <div className="grid grid-cols-2 gap-4 mb-6">
                 <div className="bg-sky-50 p-4 rounded-2xl border-2 border-sky-100">
                   <div className="flex items-center gap-2 text-sky-600 mb-1">
@@ -1054,7 +1511,10 @@ export default function App() {
                 </div>
               </div>
 
-              <button onClick={handleStartSession} className="quest-button w-full flex items-center justify-center gap-2">
+              <button
+                onClick={handleStartSession}
+                className="quest-button w-full flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
                 <Timer className="w-5 h-5" /> Start Reading Session
               </button>
             </div>
@@ -1243,8 +1703,8 @@ export default function App() {
               </div>
             </div>
 
-            <button onClick={() => setView("dashboard")} className="quest-button px-12">
-              Back to Dashboard
+            <button onClick={() => setView("bookshelf")} className="quest-button px-12">
+              Back to Bookshelf
             </button>
           </motion.div>
         )}
@@ -1287,7 +1747,7 @@ export default function App() {
       )}
 
       {/* Footer Stats */}
-      {view === "dashboard" && stats && (
+      {(view === "bookshelf" || view === "dashboard") && stats && (
         <footer className="mt-12 grid grid-cols-3 gap-4">
           <div className="text-center">
             <div className="bg-white p-3 rounded-2xl border-2 border-slate-900 mb-2 flex items-center justify-center">

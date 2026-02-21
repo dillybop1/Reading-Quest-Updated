@@ -60,3 +60,23 @@ export interface AdminCreateStudentsResponse {
   existing_count: number;
   invalid_nicknames: string[];
 }
+
+export interface AdminReflectionAnswer {
+  question_index: number;
+  question_text: string;
+  answer_text: string;
+}
+
+export interface AdminReflectionSession {
+  session_id: number;
+  timestamp: string;
+  class_code: string;
+  nickname: string;
+  book_title: string | null;
+  answers: AdminReflectionAnswer[];
+}
+
+export interface AdminReflectionsResponse {
+  reflections: AdminReflectionSession[];
+  generated_at: string;
+}

@@ -109,7 +109,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const deleted = await query(
         `
-          WITH removed_sessions AS (
+          WITH removed_reflections AS (
+            DELETE FROM session_reflections WHERE student_id = $1 RETURNING 1
+          ),
+          removed_sessions AS (
             DELETE FROM sessions WHERE student_id = $1 RETURNING 1
           ),
           removed_books AS (
@@ -123,6 +126,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           )
           SELECT
             (SELECT COUNT(*)::int FROM removed_student) AS deleted_students,
+            (SELECT COUNT(*)::int FROM removed_reflections) AS deleted_reflections,
             (SELECT COUNT(*)::int FROM removed_sessions) AS deleted_sessions,
             (SELECT COUNT(*)::int FROM removed_books) AS deleted_books,
             (SELECT COUNT(*)::int FROM removed_stats) AS deleted_stats
@@ -132,6 +136,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const result = deleted.rows[0] ?? {
         deleted_students: 0,
+        deleted_reflections: 0,
         deleted_sessions: 0,
         deleted_books: 0,
         deleted_stats: 0,

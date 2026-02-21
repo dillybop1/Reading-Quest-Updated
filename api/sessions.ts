@@ -3,6 +3,31 @@ import { query } from "./_db.js";
 import { resolveStudent } from "./_student.js";
 
 const XP_PER_LEVEL = 500;
+const MAX_REFLECTION_LENGTH = 4000;
+
+const parseReflectionEntries = (questions: unknown, answers: unknown) => {
+  const questionList = Array.isArray(questions) ? questions : [];
+  const answerList = Array.isArray(answers) ? answers : [];
+  const maxLen = Math.max(questionList.length, answerList.length);
+  const entries: Array<{ question_index: number; question_text: string; answer_text: string }> = [];
+
+  for (let i = 0; i < maxLen; i += 1) {
+    const questionRaw = questionList[i];
+    const answerRaw = answerList[i];
+    const questionText = typeof questionRaw === "string" ? questionRaw.trim() : "";
+    const answerText = typeof answerRaw === "string" ? answerRaw.trim() : "";
+
+    if (!questionText && !answerText) continue;
+
+    entries.push({
+      question_index: i,
+      question_text: (questionText || `Question ${i + 1}`).slice(0, MAX_REFLECTION_LENGTH),
+      answer_text: answerText.slice(0, MAX_REFLECTION_LENGTH),
+    });
+  }
+
+  return entries;
+};
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
@@ -19,6 +44,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         chapters_finished,
         duration_minutes,
         xp_earned,
+        questions,
+        answers,
       } = req.body ?? {};
 
       if (
@@ -47,6 +74,28 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
          RETURNING *`,
         [book_id, student.studentId, start_page, end_page, chapters_finished, duration_minutes, xp_earned]
       );
+
+      const sessionId = session.rows[0]?.id;
+      const reflectionEntries = parseReflectionEntries(questions, answers);
+      if (Number.isFinite(sessionId) && reflectionEntries.length > 0) {
+        for (const entry of reflectionEntries) {
+          await query(
+            `
+              INSERT INTO session_reflections
+              (session_id, student_id, book_id, question_index, question_text, answer_text)
+              VALUES ($1, $2, $3, $4, $5, $6)
+            `,
+            [
+              sessionId,
+              student.studentId,
+              book_id,
+              entry.question_index,
+              entry.question_text,
+              entry.answer_text,
+            ]
+          );
+        }
+      }
 
       // Update book current page
       await query("UPDATE books SET current_page = $1 WHERE id = $2 AND student_id = $3", [

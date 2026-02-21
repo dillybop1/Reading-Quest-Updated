@@ -32,6 +32,76 @@ body.dark-mode {
     linear-gradient(180deg, #0f172a 0%, #111827 100%);
 }
 
+.bookshelf-wrap {
+  margin-top: 0.5rem;
+}
+
+.bookshelf-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.55rem;
+  margin-bottom: 0.35rem;
+}
+
+.bookshelf-board {
+  width: min(96%, 640px);
+  margin: 0 auto;
+  height: 14px;
+  border: 2px solid #1f2937;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #b9854f 0%, #8f6136 100%);
+  box-shadow: 0 6px 0 rgba(15, 23, 42, 0.25);
+}
+
+.book-spine {
+  position: relative;
+  width: min(96%, 640px);
+  border: 2px solid #1e293b;
+  border-radius: 12px;
+  padding: 0.75rem 0.9rem 0.75rem 1.25rem;
+  text-align: left;
+  box-shadow: 4px 4px 0 rgba(15, 23, 42, 0.35);
+  transition: transform 140ms ease, box-shadow 140ms ease;
+}
+
+.book-spine::before {
+  content: "";
+  position: absolute;
+  left: 0.42rem;
+  top: 0.3rem;
+  bottom: 0.3rem;
+  width: 5px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.book-spine:hover {
+  transform: translateY(-1px);
+}
+
+.book-spine.selected {
+  transform: translateY(-1px);
+  box-shadow: 8px 6px 0 rgba(15, 23, 42, 0.4);
+}
+
+.book-spine-topline {
+  display: block;
+  font-weight: 800;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.book-spine-progress {
+  display: block;
+  margin-top: 0.15rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: rgba(15, 23, 42, 0.82);
+}
+
 .quest-card {
   @apply bg-white rounded-3xl border-4 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] p-6;
 }
@@ -52,6 +122,21 @@ body.dark-mode {
   background: #111827;
   border-color: #334155;
   box-shadow: 8px 8px 0 0 rgba(2, 6, 23, 0.8);
+}
+
+.theme-dark .bookshelf-board {
+  border-color: #334155;
+  background: linear-gradient(180deg, #6b4d2f 0%, #4b3421 100%);
+  box-shadow: 0 6px 0 rgba(2, 6, 23, 0.55);
+}
+
+.theme-dark .book-spine {
+  border-color: #334155;
+  box-shadow: 4px 4px 0 rgba(2, 6, 23, 0.7);
+}
+
+.theme-dark .book-spine.selected {
+  box-shadow: 8px 6px 0 rgba(2, 6, 23, 0.75);
 }
 
 .theme-dark .quest-button {
