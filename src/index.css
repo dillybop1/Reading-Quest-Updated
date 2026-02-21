@@ -220,6 +220,12 @@ body.dark-mode {
   z-index: 10;
 }
 
+.room-content-fit {
+  max-width: 42rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
 /* Room asset slots: replace these CSS-drawn classes with image/SVG backgrounds later.
    Keys map cleanly to room-frame-* elements in App.tsx for open-source art swaps. */
 

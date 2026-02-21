@@ -35,6 +35,8 @@ const THEME_STORAGE_KEY = "reading-quest-theme";
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
 const BOOK_SPINE_COLORS = ["#f59e0b", "#0ea5e9", "#22c55e", "#ef4444", "#14b8a6", "#f97316"];
+const BOOKSHELF_PAGE_SIZE = 5;
+const ROOM_SHOP_PAGE_SIZE = 1;
 const ROOM_POSITION_MIN = 2;
 const ROOM_POSITION_MAX = 98;
 const ROOM_Z_INDEX_MIN = 1;
@@ -201,7 +203,11 @@ export default function App() {
     offsetXPct: number;
     offsetYPct: number;
   } | null>(null);
+  const [bookshelfPage, setBookshelfPage] = useState(1);
+  const [roomShopPage, setRoomShopPage] = useState(1);
+  const [roomContentScale, setRoomContentScale] = useState(1);
   const roomFrameRef = useRef<HTMLDivElement | null>(null);
+  const roomContentRef = useRef<HTMLDivElement | null>(null);
   const roomStateRef = useRef<RoomStateResponse | null>(null);
 
   useEffect(() => {
@@ -263,6 +269,11 @@ export default function App() {
       setIsRoomCustomizeMode(false);
       setRoomDragState(null);
       setRoomCustomizeSnapshot(null);
+      setRoomShopPage(1);
+    }
+
+    if (view !== "bookshelf") {
+      setBookshelfPage(1);
     }
   }, [view]);
 
@@ -390,6 +401,27 @@ export default function App() {
       .sort((a, b) => a.layout.z - b.layout.z);
   }, [roomState]);
 
+  const pagedBooks = useMemo(() => {
+    const startIndex = (bookshelfPage - 1) * BOOKSHELF_PAGE_SIZE;
+    return books.slice(startIndex, startIndex + BOOKSHELF_PAGE_SIZE);
+  }, [books, bookshelfPage]);
+
+  const bookshelfTotalPages = Math.max(1, Math.ceil(books.length / BOOKSHELF_PAGE_SIZE));
+
+  const sortedRoomShopItems = useMemo(() => {
+    if (!roomState?.items?.length) return [];
+    return roomState.items
+      .slice()
+      .sort((a, b) => a.min_xp - b.min_xp || a.cost_coins - b.cost_coins);
+  }, [roomState]);
+
+  const pagedRoomShopItems = useMemo(() => {
+    const startIndex = (roomShopPage - 1) * ROOM_SHOP_PAGE_SIZE;
+    return sortedRoomShopItems.slice(startIndex, startIndex + ROOM_SHOP_PAGE_SIZE);
+  }, [sortedRoomShopItems, roomShopPage]);
+
+  const roomShopTotalPages = Math.max(1, Math.ceil(sortedRoomShopItems.length / ROOM_SHOP_PAGE_SIZE));
+
   const hasPositionableEquippedRoomItems = equippedRoomSprites.length > 0;
 
   useEffect(() => {
@@ -407,6 +439,67 @@ export default function App() {
       setResponsesStudentFilter("all");
     }
   }, [responseStudentOptions, responsesStudentFilter]);
+
+  useEffect(() => {
+    setBookshelfPage((prev) => Math.min(prev, bookshelfTotalPages));
+  }, [bookshelfTotalPages]);
+
+  useEffect(() => {
+    setRoomShopPage((prev) => Math.min(prev, roomShopTotalPages));
+  }, [roomShopTotalPages]);
+
+  useEffect(() => {
+    const isRoomShellView = Boolean(student) && view === "room";
+    const isLayoutEditMode = isRoomCustomizeMode && view === "room";
+
+    if (!isRoomShellView || isLayoutEditMode) {
+      setRoomContentScale(1);
+      return;
+    }
+
+    const recalculateScale = () => {
+      const contentElement = roomContentRef.current;
+      if (!contentElement) return;
+
+      const bounds = contentElement.getBoundingClientRect();
+      const availableHeight = Math.max(1, window.innerHeight - bounds.top - 6);
+      const availableWidth = Math.max(1, window.innerWidth - 6);
+      const requiredHeight = Math.max(1, contentElement.scrollHeight);
+      const requiredWidth = Math.max(1, contentElement.scrollWidth);
+
+      const nextScale = Math.min(1, availableHeight / requiredHeight, availableWidth / requiredWidth);
+      const roundedScale = Math.max(0.35, Number(nextScale.toFixed(3)));
+      setRoomContentScale((prev) => (Math.abs(prev - roundedScale) > 0.004 ? roundedScale : prev));
+    };
+
+    const rafFirst = window.requestAnimationFrame(() => {
+      recalculateScale();
+      window.requestAnimationFrame(recalculateScale);
+    });
+    const resizeObserver = new ResizeObserver(() => {
+      recalculateScale();
+    });
+    if (roomContentRef.current) {
+      resizeObserver.observe(roomContentRef.current);
+    }
+    window.addEventListener("resize", recalculateScale);
+    return () => {
+      window.cancelAnimationFrame(rafFirst);
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", recalculateScale);
+    };
+  }, [
+    student,
+    isRoomCustomizeMode,
+    view,
+    showAddBookForm,
+    books.length,
+    bookshelfPage,
+    roomShopPage,
+    roomError,
+    roomShopTotalPages,
+    roomState?.items?.length,
+  ]);
 
   const normalizeClassCode = (value: string) => value.trim().toUpperCase();
   const normalizeNickname = (value: string) => value.trim();
@@ -1158,6 +1251,8 @@ export default function App() {
     setRoomState(null);
     setRoomError(null);
     setRoomBusyKey(null);
+    setBookshelfPage(1);
+    setRoomShopPage(1);
     setAnswers([]);
     setCurrentQuestionIndex(0);
     setStartPage(0);
@@ -1327,15 +1422,19 @@ export default function App() {
   const canEditRoomLayout = isRoomCustomizeMode && view === "room";
   const showAppChrome = !canEditRoomLayout;
   const appShellClassName = showRoomShell
-    ? "min-h-screen min-h-[100dvh] w-full room-shell-active overflow-hidden"
+    ? "h-screen h-[100dvh] w-full room-shell-active overflow-hidden"
     : "min-h-screen p-4 md:p-8 max-w-2xl mx-auto";
   const contentShellClassName = showRoomShell
     ? canEditRoomLayout
-      ? "room-content-layer min-h-screen min-h-[100dvh] pointer-events-none"
-      : "room-content-layer max-w-2xl mx-auto p-3 md:p-4 min-h-screen min-h-[100dvh] flex flex-col"
+      ? "room-content-layer h-full pointer-events-none"
+      : view === "room"
+        ? "room-content-layer room-content-fit p-3 md:p-4"
+        : "room-content-layer room-content-fit p-3 md:p-4 h-full flex flex-col"
     : "";
   const mainAreaClassName = showRoomShell
-    ? "flex-1 min-h-0 overflow-y-auto pr-1"
+    ? view === "room"
+      ? ""
+      : "flex-1 min-h-0"
     : "";
   const showFooterStats = Boolean(
     stats &&
@@ -1422,7 +1521,18 @@ export default function App() {
         </div>
       )}
 
-      <div className={contentShellClassName}>
+      <div
+        className={contentShellClassName}
+        ref={showRoomShell ? roomContentRef : null}
+        style={
+          showRoomShell && !canEditRoomLayout
+            ? ({
+                transform: `scale(${roomContentScale})`,
+                transformOrigin: "top center",
+              } as React.CSSProperties)
+            : undefined
+        }
+      >
       {canEditRoomLayout && (
         <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 rounded-2xl border-2 border-slate-900 bg-white/95 px-3 py-2 shadow-lg pointer-events-auto">
           <button
@@ -2046,7 +2156,9 @@ export default function App() {
               {books.length > 0 ? (
                 <div className="bookshelf-wrap">
                   <div className="bookshelf-stack">
-                    {books.map((book, index) => {
+                    {pagedBooks.map((book, index) => {
+                      const pageStartIndex = (bookshelfPage - 1) * BOOKSHELF_PAGE_SIZE;
+                      const colorIndex = pageStartIndex + index;
                       const progressPercent = getBookProgressPercent(book);
                       const isSelected = activeBook?.id === book.id;
                       return (
@@ -2056,8 +2168,8 @@ export default function App() {
                           onClick={() => handleSelectBook(book)}
                           className={`book-spine ${isSelected ? "selected" : ""}`}
                           style={{
-                            backgroundColor: BOOK_SPINE_COLORS[index % BOOK_SPINE_COLORS.length],
-                            zIndex: books.length - index,
+                            backgroundColor: BOOK_SPINE_COLORS[colorIndex % BOOK_SPINE_COLORS.length],
+                            zIndex: pagedBooks.length - index,
                           }}
                         >
                           <span className="book-spine-topline">
@@ -2071,6 +2183,29 @@ export default function App() {
                     })}
                   </div>
                   <div className="bookshelf-board" />
+                  {bookshelfTotalPages > 1 && (
+                    <div className="mt-3 flex items-center justify-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setBookshelfPage((prev) => Math.max(1, prev - 1))}
+                        disabled={bookshelfPage === 1}
+                        className="px-3 py-1 rounded-lg border-2 border-slate-200 text-xs font-bold text-slate-600 disabled:opacity-40"
+                      >
+                        Prev
+                      </button>
+                      <p className="text-xs font-bold text-slate-500">
+                        Shelf Page {bookshelfPage} / {bookshelfTotalPages}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setBookshelfPage((prev) => Math.min(bookshelfTotalPages, prev + 1))}
+                        disabled={bookshelfPage === bookshelfTotalPages}
+                        className="px-3 py-1 rounded-lg border-2 border-slate-200 text-xs font-bold text-slate-600 disabled:opacity-40"
+                      >
+                        Next
+                      </button>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <p className="text-slate-500 font-medium">No books yet. Add one to start your shelf.</p>
@@ -2085,9 +2220,9 @@ export default function App() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className={showRoomShell ? "h-full" : "space-y-6"}
+            className={showRoomShell ? "" : "space-y-6"}
           >
-            <div className={`quest-card ${showRoomShell ? "h-full flex flex-col room-tab-frame" : ""}`}>
+            <div className={`quest-card ${showRoomShell ? "flex flex-col room-tab-frame" : ""}`}>
               <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-2xl font-bold">My Reading Room</h2>
@@ -2132,69 +2267,87 @@ export default function App() {
                 </div>
               </div>
 
-              <p className="text-sm text-slate-500 mb-5">
-                Your room is always visible around this screen. Buy and equip items here to update it instantly.
-              </p>
-
-              <p className="text-sm text-slate-500 mb-4">
-                Use Customize Room to enter room-only edit mode and drag your equipped items.
+              <p className="text-sm text-slate-500 mb-3">
+                Buy and equip items here. Use Customize Room to drag equipped items around your room.
               </p>
 
               {roomError && <p className="text-sm text-rose-600 font-medium mb-3">{roomError}</p>}
 
-              <h3 className="font-bold text-lg mb-3">Room Shop</h3>
-              <div className={showRoomShell ? "room-shop-scroll flex-1 min-h-0 pr-1" : ""}>
-                {roomState?.items?.length ? (
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="font-bold text-lg">Room Shop</h3>
+                {roomShopTotalPages > 1 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setRoomShopPage((prev) => Math.max(1, prev - 1))}
+                      disabled={roomShopPage === 1}
+                      className="px-3 py-1 rounded-lg border-2 border-slate-200 text-xs font-bold text-slate-600 disabled:opacity-40"
+                    >
+                      Prev
+                    </button>
+                    <p className="text-xs font-bold text-slate-500">
+                      Page {roomShopPage} / {roomShopTotalPages}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setRoomShopPage((prev) => Math.min(roomShopTotalPages, prev + 1))}
+                      disabled={roomShopPage === roomShopTotalPages}
+                      className="px-3 py-1 rounded-lg border-2 border-slate-200 text-xs font-bold text-slate-600 disabled:opacity-40"
+                    >
+                      Next
+                    </button>
+                  </div>
+                )}
+              </div>
+              <div>
+                {sortedRoomShopItems.length ? (
                   <div className="space-y-2">
-                    {roomState.items
-                      .slice()
-                      .sort((a, b) => a.min_xp - b.min_xp || a.cost_coins - b.cost_coins)
-                      .map((item) => {
-                        const notEnoughCoins = !item.owned && (roomState.coins ?? 0) < item.cost_coins;
-                        const disabled =
-                          roomBusyKey === item.key || Boolean(roomLayoutSavingKey) || !item.unlocked || notEnoughCoins;
-                        let buttonLabel = `Buy ${item.cost_coins} Coins`;
-                        let nextAction: "purchase" | "equip" | "unequip" = "purchase";
+                    {pagedRoomShopItems.map((item) => {
+                      const notEnoughCoins = !item.owned && (roomState?.coins ?? 0) < item.cost_coins;
+                      const disabled =
+                        roomBusyKey === item.key || Boolean(roomLayoutSavingKey) || !item.unlocked || notEnoughCoins;
+                      let buttonLabel = `Buy ${item.cost_coins} Coins`;
+                      let nextAction: "purchase" | "equip" | "unequip" = "purchase";
 
-                        if (!item.unlocked) {
-                          buttonLabel = `Unlock at ${item.min_xp} XP`;
-                        } else if (notEnoughCoins) {
-                          buttonLabel = `Need ${item.cost_coins} Coins`;
-                        } else if (item.owned && item.equipped) {
-                          buttonLabel = "Unequip";
-                          nextAction = "unequip";
-                        } else if (item.owned) {
-                          buttonLabel = "Equip";
-                          nextAction = "equip";
-                        }
+                      if (!item.unlocked) {
+                        buttonLabel = `Unlock at ${item.min_xp} XP`;
+                      } else if (notEnoughCoins) {
+                        buttonLabel = `Need ${item.cost_coins} Coins`;
+                      } else if (item.owned && item.equipped) {
+                        buttonLabel = "Unequip";
+                        nextAction = "unequip";
+                      } else if (item.owned) {
+                        buttonLabel = "Equip";
+                        nextAction = "equip";
+                      }
 
-                        return (
-                          <div
-                            key={item.key}
-                            className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
-                          >
-                            <div>
-                              <p className="font-bold text-slate-900">{item.name}</p>
-                              <p className="text-sm text-slate-600">{item.description}</p>
-                              <p className="text-xs font-semibold text-slate-500 mt-1">
-                                Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() => handleRoomAction(nextAction, item.key)}
-                              disabled={disabled}
-                              className={`px-3 py-2 rounded-xl border-2 text-sm font-bold ${
-                                item.owned && item.equipped
-                                  ? "border-emerald-300 bg-emerald-100 text-emerald-700"
-                                  : "border-slate-300 bg-white text-slate-700"
-                              } disabled:opacity-50`}
-                            >
-                              {roomBusyKey === item.key ? "Saving..." : buttonLabel}
-                            </button>
+                      return (
+                        <div
+                          key={item.key}
+                          className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+                        >
+                          <div>
+                            <p className="font-bold text-slate-900">{item.name}</p>
+                            <p className="text-sm text-slate-600">{item.description}</p>
+                            <p className="text-xs font-semibold text-slate-500 mt-1">
+                              Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
+                            </p>
                           </div>
-                        );
-                      })}
+                          <button
+                            type="button"
+                            onClick={() => handleRoomAction(nextAction, item.key)}
+                            disabled={disabled}
+                            className={`px-3 py-2 rounded-xl border-2 text-sm font-bold ${
+                              item.owned && item.equipped
+                                ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+                                : "border-slate-300 bg-white text-slate-700"
+                            } disabled:opacity-50`}
+                          >
+                            {roomBusyKey === item.key ? "Saving..." : buttonLabel}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-slate-500">No room items found.</p>
