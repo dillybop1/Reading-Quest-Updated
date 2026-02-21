@@ -205,10 +205,11 @@ export default function App() {
   } | null>(null);
   const [bookshelfPage, setBookshelfPage] = useState(1);
   const [roomShopPage, setRoomShopPage] = useState(1);
-  const [roomContentScale, setRoomContentScale] = useState(1);
   const roomFrameRef = useRef<HTMLDivElement | null>(null);
-  const roomContentRef = useRef<HTMLDivElement | null>(null);
   const roomStateRef = useRef<RoomStateResponse | null>(null);
+  const roomUiScaleHostRef = useRef<HTMLDivElement | null>(null);
+  const roomUiScaleInnerRef = useRef<HTMLDivElement | null>(null);
+  const [roomUiScale, setRoomUiScale] = useState(1);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
@@ -447,59 +448,6 @@ export default function App() {
   useEffect(() => {
     setRoomShopPage((prev) => Math.min(prev, roomShopTotalPages));
   }, [roomShopTotalPages]);
-
-  useEffect(() => {
-    const isRoomShellView = Boolean(student) && view === "room";
-    const isLayoutEditMode = isRoomCustomizeMode && view === "room";
-
-    if (!isRoomShellView || isLayoutEditMode) {
-      setRoomContentScale(1);
-      return;
-    }
-
-    const recalculateScale = () => {
-      const contentElement = roomContentRef.current;
-      if (!contentElement) return;
-
-      const bounds = contentElement.getBoundingClientRect();
-      const availableHeight = Math.max(1, window.innerHeight - bounds.top - 6);
-      const availableWidth = Math.max(1, window.innerWidth - 6);
-      const requiredHeight = Math.max(1, contentElement.scrollHeight);
-      const requiredWidth = Math.max(1, contentElement.scrollWidth);
-
-      const nextScale = Math.min(1, availableHeight / requiredHeight, availableWidth / requiredWidth);
-      const roundedScale = Math.max(0.35, Number(nextScale.toFixed(3)));
-      setRoomContentScale((prev) => (Math.abs(prev - roundedScale) > 0.004 ? roundedScale : prev));
-    };
-
-    const rafFirst = window.requestAnimationFrame(() => {
-      recalculateScale();
-      window.requestAnimationFrame(recalculateScale);
-    });
-    const resizeObserver = new ResizeObserver(() => {
-      recalculateScale();
-    });
-    if (roomContentRef.current) {
-      resizeObserver.observe(roomContentRef.current);
-    }
-    window.addEventListener("resize", recalculateScale);
-    return () => {
-      window.cancelAnimationFrame(rafFirst);
-      resizeObserver.disconnect();
-      window.removeEventListener("resize", recalculateScale);
-    };
-  }, [
-    student,
-    isRoomCustomizeMode,
-    view,
-    showAddBookForm,
-    books.length,
-    bookshelfPage,
-    roomShopPage,
-    roomError,
-    roomShopTotalPages,
-    roomState?.items?.length,
-  ]);
 
   const normalizeClassCode = (value: string) => value.trim().toUpperCase();
   const normalizeNickname = (value: string) => value.trim();
@@ -1421,26 +1369,70 @@ export default function App() {
   const showRoomShell = Boolean(student) && view !== "student" && view !== "admin" && view !== "loading";
   const canEditRoomLayout = isRoomCustomizeMode && view === "room";
   const showAppChrome = !canEditRoomLayout;
+  const shouldScaleRoomContent = showRoomShell && showAppChrome;
   const appShellClassName = showRoomShell
-    ? "h-screen h-[100dvh] w-full room-shell-active overflow-hidden"
+    ? "min-h-screen h-[100dvh] w-full room-shell-active overflow-hidden"
     : "min-h-screen p-4 md:p-8 max-w-2xl mx-auto";
   const contentShellClassName = showRoomShell
     ? canEditRoomLayout
       ? "room-content-layer h-full pointer-events-none"
-      : view === "room"
-        ? "room-content-layer room-content-fit p-3 md:p-4"
-        : "room-content-layer room-content-fit p-3 md:p-4 h-full flex flex-col"
+      : "room-content-layer p-3 md:p-4 h-full"
     : "";
-  const mainAreaClassName = showRoomShell
-    ? view === "room"
-      ? ""
-      : "flex-1 min-h-0"
-    : "";
+  const mainAreaClassName = showRoomShell ? "flex-1 min-h-0" : "";
   const showFooterStats = Boolean(
     stats &&
       (view === "dashboard" || (view === "bookshelf" && !showAddBookForm)) &&
       showAppChrome
   );
+
+  useEffect(() => {
+    if (!shouldScaleRoomContent) {
+      setRoomUiScale(1);
+      return;
+    }
+
+    const hostEl = roomUiScaleHostRef.current;
+    const innerEl = roomUiScaleInnerRef.current;
+    if (!hostEl || !innerEl) {
+      setRoomUiScale(1);
+      return;
+    }
+
+    let frameId = 0;
+    const measure = () => {
+      const hostWidth = hostEl.clientWidth;
+      const hostHeight = hostEl.clientHeight;
+      const contentWidth = innerEl.scrollWidth;
+      const contentHeight = innerEl.scrollHeight;
+
+      if (!hostWidth || !hostHeight || !contentWidth || !contentHeight) return;
+
+      const horizontalPadding = 10;
+      const verticalPadding = 8;
+      const scaleByWidth = (hostWidth - horizontalPadding) / contentWidth;
+      const scaleByHeight = (hostHeight - verticalPadding) / contentHeight;
+      const nextScale = clampNumber(Math.min(scaleByWidth, scaleByHeight), 0.62, 1.38);
+
+      setRoomUiScale((prev) => (Math.abs(prev - nextScale) > 0.01 ? nextScale : prev));
+    };
+
+    const scheduleMeasure = () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(measure);
+    };
+
+    scheduleMeasure();
+    const observer = new ResizeObserver(scheduleMeasure);
+    observer.observe(hostEl);
+    observer.observe(innerEl);
+    window.addEventListener("resize", scheduleMeasure);
+
+    return () => {
+      if (frameId) cancelAnimationFrame(frameId);
+      observer.disconnect();
+      window.removeEventListener("resize", scheduleMeasure);
+    };
+  }, [shouldScaleRoomContent, showFooterStats, showAddBookForm, view]);
 
   if (view === "loading") {
     return (
@@ -1521,18 +1513,7 @@ export default function App() {
         </div>
       )}
 
-      <div
-        className={contentShellClassName}
-        ref={showRoomShell ? roomContentRef : null}
-        style={
-          showRoomShell && !canEditRoomLayout
-            ? ({
-                transform: `scale(${roomContentScale})`,
-                transformOrigin: "top center",
-              } as React.CSSProperties)
-            : undefined
-        }
-      >
+      <div className={contentShellClassName}>
       {canEditRoomLayout && (
         <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 rounded-2xl border-2 border-slate-900 bg-white/95 px-3 py-2 shadow-lg pointer-events-auto">
           <button
@@ -1556,6 +1537,15 @@ export default function App() {
       )}
 
       {showAppChrome && (
+      <div
+        ref={shouldScaleRoomContent ? roomUiScaleHostRef : undefined}
+        className={shouldScaleRoomContent ? "room-ui-scale-host" : ""}
+      >
+      <div
+        ref={shouldScaleRoomContent ? roomUiScaleInnerRef : undefined}
+        className={shouldScaleRoomContent ? "room-ui-scale-inner room-content-fit" : ""}
+        style={shouldScaleRoomContent ? { transform: `scale(${roomUiScale})` } : undefined}
+      >
       <>
       {/* Header / XP Bar */}
       {student && view !== "student" && view !== "admin" && (
@@ -2702,6 +2692,8 @@ export default function App() {
         </footer>
       )}
       </>
+      </div>
+      </div>
       )}
       </div>
     </div>
