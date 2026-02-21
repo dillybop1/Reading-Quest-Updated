@@ -42,24 +42,39 @@ export default function App() {
     fetchInitialData();
   }, []);
 
-  const fetchInitialData = async () => {
-    try {
-      const [bookRes, statsRes] = await Promise.all([
-        fetch("/api/books/active"),
-        fetch("/api/stats")
-      ]);
-      const book = await bookRes.json();
-      const userStats = await statsRes.json();
-      
-      setActiveBook(book);
-      setStats(userStats);
-      setStartPage(book?.current_page || 0);
-      setEndPage(book?.current_page || 0);
-      setView(book ? "dashboard" : "setup");
-    } catch (err) {
-      console.error("Failed to fetch data", err);
+const fetchInitialData = async () => {
+  try {
+    const [bookRes, statsRes] = await Promise.all([
+      fetch("/api/books/active"),
+      fetch("/api/stats"),
+    ]);
+
+    // 🔥 ADD THIS SECTION
+    if (!bookRes.ok) {
+      throw new Error(`books/active failed: ${bookRes.status}`);
     }
-  };
+
+    if (!statsRes.ok) {
+      throw new Error(`stats failed: ${statsRes.status}`);
+    }
+    // 🔥 END ADD
+
+    const book = await bookRes.json();
+    const userStats = await statsRes.json();
+
+    setActiveBook(book);
+    setStats(userStats);
+    setStartPage(book?.current_page || 0);
+    setEndPage(book?.current_page || 0);
+    setView(book ? "dashboard" : "setup");
+
+  } catch (err) {
+    console.error("Failed to fetch data", err);
+
+    // 🚨 This prevents infinite loading
+    setView("setup");
+  }
+};
 
   const handleStartSession = () => {
     setTimerSeconds(0);
