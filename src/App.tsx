@@ -42,39 +42,56 @@ export default function App() {
     fetchInitialData();
   }, []);
 
-const fetchInitialData = async () => {
-  try {
-    const [bookRes, statsRes] = await Promise.all([
-      fetch("/api/books/active"),
-      fetch("/api/stats"),
-    ]);
+  const parseNumberInput = (value: string, fallback = 0) => {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? fallback : parsed;
+  };
 
-    // 🔥 ADD THIS SECTION
-    if (!bookRes.ok) {
-      throw new Error(`books/active failed: ${bookRes.status}`);
+  const fetchInitialData = async () => {
+    try {
+      const [bookResult, statsResult] = await Promise.allSettled([
+        fetch("/api/books/active"),
+        fetch("/api/stats"),
+      ]);
+
+      let bookData: Book | null = null;
+      let statsData: UserStats | null = null;
+
+      if (bookResult.status === "fulfilled") {
+        if (bookResult.value.ok) {
+          bookData = await bookResult.value.json();
+          setActiveBook(bookData);
+          setStartPage(bookData?.current_page || 0);
+          setEndPage(bookData?.current_page || 0);
+        } else {
+          console.error(`books/active failed: ${bookResult.value.status}`);
+        }
+      } else {
+        console.error("books/active request failed", bookResult.reason);
+      }
+
+      if (statsResult.status === "fulfilled") {
+        if (statsResult.value.ok) {
+          statsData = await statsResult.value.json();
+          setStats(statsData);
+        } else {
+          console.error(`stats failed: ${statsResult.value.status}`);
+        }
+      } else {
+        console.error("stats request failed", statsResult.reason);
+      }
+
+      if (!bookData && !statsData) {
+        setView("setup");
+        return;
+      }
+
+      setView(bookData ? "dashboard" : "setup");
+    } catch (err) {
+      console.error("Failed to fetch data", err);
+      setView("setup");
     }
-
-    if (!statsRes.ok) {
-      throw new Error(`stats failed: ${statsRes.status}`);
-    }
-    // 🔥 END ADD
-
-    const book = await bookRes.json();
-    const userStats = await statsRes.json();
-
-    setActiveBook(book);
-    setStats(userStats);
-    setStartPage(book?.current_page || 0);
-    setEndPage(book?.current_page || 0);
-    setView(book ? "dashboard" : "setup");
-
-  } catch (err) {
-    console.error("Failed to fetch data", err);
-
-    // 🚨 This prevents infinite loading
-    setView("setup");
-  }
-};
+  };
 
   const handleStartSession = () => {
     setTimerSeconds(0);
@@ -121,11 +138,13 @@ const fetchInitialData = async () => {
   };
 
   const handleQuestionSubmit = async () => {
+    if (!activeBook) return;
+
     const xp = calculateXp();
     setEarnedXp(xp);
 
     const sessionData: ReadingSession = {
-      book_id: activeBook!.id,
+      book_id: activeBook.id,
       start_page: startPage,
       end_page: endPage,
       chapters_finished: chaptersFinished,
@@ -134,11 +153,22 @@ const fetchInitialData = async () => {
     };
 
     try {
-      await fetch("/api/sessions", {
+      const response = await fetch("/api/sessions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(sessionData)
       });
+
+      if (!response.ok) {
+        throw new Error(`Failed to save session: ${response.status}`);
+      }
+
+      setActiveBook(prev =>
+        prev && prev.id === sessionData.book_id
+          ? { ...prev, current_page: sessionData.end_page }
+          : prev
+      );
+
       await fetchInitialData();
       setView("celebration");
     } catch (err) {
@@ -290,7 +320,7 @@ const fetchInitialData = async () => {
                     <input 
                       type="number" 
                       value={targetMinutes} 
-                      onChange={(e) => setTargetMinutes(parseInt(e.target.value))}
+                      onChange={(e) => setTargetMinutes(parseNumberInput(e.target.value, 20))}
                       className="w-12 bg-transparent font-bold text-xl focus:outline-none"
                     />
                     <span className="font-bold">min</span>
@@ -360,7 +390,7 @@ const fetchInitialData = async () => {
                   <input 
                     type="number" 
                     value={startPage} 
-                    onChange={(e) => setStartPage(parseInt(e.target.value))}
+                    onChange={(e) => setStartPage(parseNumberInput(e.target.value))}
                     className="quest-input" 
                   />
                 </div>
@@ -369,7 +399,7 @@ const fetchInitialData = async () => {
                   <input 
                     type="number" 
                     value={endPage} 
-                    onChange={(e) => setEndPage(parseInt(e.target.value))}
+                    onChange={(e) => setEndPage(parseNumberInput(e.target.value))}
                     className="quest-input" 
                   />
                 </div>
@@ -530,3 +560,4 @@ const fetchInitialData = async () => {
     </div>
   );
 }
+
