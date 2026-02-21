@@ -13,7 +13,9 @@ import {
   XCircle,
   Shield,
   RefreshCw,
-  Trash2
+  Trash2,
+  Sun,
+  Moon
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -26,10 +28,12 @@ import {
 } from "./types";
 
 const STUDENT_STORAGE_KEY = "reading-quest-student";
+const THEME_STORAGE_KEY = "reading-quest-theme";
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
 
 export default function App() {
+  const [isDarkMode, setIsDarkMode] = useState(false);
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [student, setStudent] = useState<StudentIdentity | null>(null);
@@ -72,6 +76,19 @@ export default function App() {
 
   // Celebration State
   const [earnedXp, setEarnedXp] = useState(0);
+
+  useEffect(() => {
+    const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+    setIsDarkMode(savedTheme === "dark");
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem(THEME_STORAGE_KEY, isDarkMode ? "dark" : "light");
+    document.body.classList.toggle("dark-mode", isDarkMode);
+    return () => {
+      document.body.classList.remove("dark-mode");
+    };
+  }, [isDarkMode]);
 
   useEffect(() => {
     const raw = localStorage.getItem(STUDENT_STORAGE_KEY);
@@ -577,7 +594,24 @@ export default function App() {
 
   if (view === "loading") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-sky-50">
+      <div
+        className={`min-h-screen flex items-center justify-center ${isDarkMode ? "bg-slate-900 text-slate-100" : "bg-sky-50"}`}
+      >
+        <button
+          type="button"
+          onClick={() => setIsDarkMode((prev) => !prev)}
+          className={`fixed right-4 top-4 z-40 rounded-xl border-2 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
+            isDarkMode
+              ? "border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+          title="Toggle dark mode"
+        >
+          <span className="flex items-center gap-2">
+            {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {isDarkMode ? "Light" : "Dark"}
+          </span>
+        </button>
         <motion.div 
           animate={{ rotate: 360 }}
           transition={{ repeat: Infinity, duration: 1, ease: "linear" }}
@@ -589,7 +623,27 @@ export default function App() {
   }
 
   return (
-    <div className={`min-h-screen p-4 md:p-8 max-w-2xl mx-auto ${view === "student" ? "student-shell" : ""}`}>
+    <div
+      className={`min-h-screen p-4 md:p-8 max-w-2xl mx-auto ${
+        view === "student" ? "student-shell" : ""
+      } ${isDarkMode ? "theme-dark" : "theme-light"}`}
+    >
+      <button
+        type="button"
+        onClick={() => setIsDarkMode((prev) => !prev)}
+        className={`fixed right-4 top-4 z-40 rounded-xl border-2 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
+          isDarkMode
+            ? "border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700"
+            : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+        }`}
+        title="Toggle dark mode"
+      >
+        <span className="flex items-center gap-2">
+          {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          {isDarkMode ? "Light" : "Dark"}
+        </span>
+      </button>
+
       {/* Header / XP Bar */}
       {student && view !== "student" && view !== "admin" && (
         <header className="mb-8">

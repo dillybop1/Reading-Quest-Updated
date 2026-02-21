@@ -9,6 +9,12 @@
 body {
   background-color: #f6efe3;
   color: #1e293b;
+  transition: background-color 200ms ease, color 200ms ease;
+}
+
+body.dark-mode {
+  background-color: #0f172a;
+  color: #e2e8f0;
 }
 
 .student-shell {
@@ -17,6 +23,13 @@ body {
     radial-gradient(700px 420px at 110% 0%, rgba(236, 206, 171, 0.42), transparent 60%),
     linear-gradient(180deg, #faf4ea 0%, #f2e7d6 100%);
   border-radius: 1.5rem;
+}
+
+.theme-dark.student-shell {
+  background:
+    radial-gradient(920px 520px at -8% -4%, rgba(71, 85, 105, 0.38), transparent 62%),
+    radial-gradient(760px 460px at 108% -6%, rgba(30, 41, 59, 0.46), transparent 64%),
+    linear-gradient(180deg, #0f172a 0%, #111827 100%);
 }
 
 .quest-card {
@@ -29,4 +42,80 @@ body {
 
 .quest-input {
   @apply w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 focus:border-amber-400 focus:outline-none transition-colors;
+}
+
+.theme-dark {
+  color: #e2e8f0;
+}
+
+.theme-dark .quest-card {
+  background: #111827;
+  border-color: #334155;
+  box-shadow: 8px 8px 0 0 rgba(2, 6, 23, 0.8);
+}
+
+.theme-dark .quest-button {
+  background: #f59e0b;
+  border-bottom-color: #b45309;
+  color: #0f172a;
+}
+
+.theme-dark .quest-button:hover {
+  background: #fbbf24;
+}
+
+.theme-dark .quest-input {
+  background: #0f172a;
+  border-color: #334155;
+  color: #e2e8f0;
+}
+
+.theme-dark .quest-input::placeholder {
+  color: #94a3b8;
+}
+
+.theme-dark .bg-white {
+  background-color: #111827 !important;
+}
+
+.theme-dark .bg-slate-50 {
+  background-color: #0f172a !important;
+}
+
+.theme-dark .bg-slate-100 {
+  background-color: #1e293b !important;
+}
+
+.theme-dark .bg-sky-50 {
+  background-color: #1e293b !important;
+}
+
+.theme-dark .bg-amber-50 {
+  background-color: #2b1f0e !important;
+}
+
+.theme-dark .bg-amber-100 {
+  background-color: #3f2b10 !important;
+}
+
+.theme-dark .text-slate-500,
+.theme-dark .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+.theme-dark .text-slate-700 {
+  color: #cbd5e1 !important;
+}
+
+.theme-dark .text-slate-900 {
+  color: #e2e8f0 !important;
+}
+
+.theme-dark .border-slate-900 {
+  border-color: #334155 !important;
+}
+
+.theme-dark .border-slate-200,
+.theme-dark .border-slate-100 {
+  border-color: #334155 !important;
 }
