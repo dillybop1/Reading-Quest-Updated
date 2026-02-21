@@ -12,7 +12,8 @@ import {
   Flame,
   XCircle,
   Shield,
-  RefreshCw
+  RefreshCw,
+  Trash2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import {
@@ -46,6 +47,7 @@ export default function App() {
   const [teacherSetupError, setTeacherSetupError] = useState<string | null>(null);
   const [teacherSetupResult, setTeacherSetupResult] = useState<AdminCreateStudentsResponse | null>(null);
   const [isTeacherSetupSaving, setIsTeacherSetupSaving] = useState(false);
+  const [deleteBusyKey, setDeleteBusyKey] = useState<string | null>(null);
   const [adminTapCount, setAdminTapCount] = useState(0);
   const adminTapResetRef = useRef<NodeJS.Timeout | null>(null);
   const [adminAccessKey, setAdminAccessKey] = useState<string | null>(null);
@@ -211,6 +213,80 @@ export default function App() {
       return;
     }
     await loadAdminRoster(adminAccessKey);
+  };
+
+  const handleDeleteStudent = async (studentId: number, nickname: string, classCode: string) => {
+    if (!adminAccessKey) {
+      setAdminError("Admin session expired. Re-open admin mode.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete ${nickname} from ${classCode}? This removes their books, sessions, and stats.`
+    );
+    if (!confirmed) return;
+
+    setDeleteBusyKey(`student-${studentId}`);
+    setAdminError(null);
+
+    try {
+      const response = await fetch("/api/admin/students", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminAccessKey,
+        },
+        body: JSON.stringify({ student_id: studentId }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Delete failed: ${response.status}`);
+      }
+
+      await loadAdminRoster(adminAccessKey);
+    } catch (err: any) {
+      setAdminError(String(err?.message ?? err));
+    } finally {
+      setDeleteBusyKey(null);
+    }
+  };
+
+  const handleDeleteClass = async (classCode: string, studentCount: number) => {
+    if (!adminAccessKey) {
+      setAdminError("Admin session expired. Re-open admin mode.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Delete class ${classCode} and ${studentCount} student record(s)? This removes all related books, sessions, and stats.`
+    );
+    if (!confirmed) return;
+
+    setDeleteBusyKey(`class-${classCode}`);
+    setAdminError(null);
+
+    try {
+      const response = await fetch("/api/admin/classes", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminAccessKey,
+        },
+        body: JSON.stringify({ class_code: classCode }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Delete failed: ${response.status}`);
+      }
+
+      await loadAdminRoster(adminAccessKey);
+    } catch (err: any) {
+      setAdminError(String(err?.message ?? err));
+    } finally {
+      setDeleteBusyKey(null);
+    }
   };
 
   const handleTeacherSetupSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -393,6 +469,7 @@ export default function App() {
     setTeacherNicknamesInput("");
     setTeacherSetupError(null);
     setTeacherSetupResult(null);
+    setDeleteBusyKey(null);
     setAdminTapCount(0);
     localStorage.removeItem(STUDENT_STORAGE_KEY);
     setStudent(null);
@@ -688,9 +765,22 @@ export default function App() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       {adminRoster.classes.map((classRow) => (
                         <div key={classRow.class_code} className="bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3">
-                          <p className="text-xs uppercase text-slate-400 font-bold">Class Code</p>
-                          <p className="font-bold text-lg">{classRow.class_code}</p>
-                          <p className="text-sm text-slate-500">{classRow.student_count} students</p>
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="text-xs uppercase text-slate-400 font-bold">Class Code</p>
+                              <p className="font-bold text-lg">{classRow.class_code}</p>
+                              <p className="text-sm text-slate-500">{classRow.student_count} students</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteClass(classRow.class_code, classRow.student_count)}
+                              disabled={deleteBusyKey === `class-${classRow.class_code}`}
+                              className="px-2 py-1 rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                              title="Delete class"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -713,6 +803,7 @@ export default function App() {
                             <th className="pb-2 pr-4">Quests</th>
                             <th className="pb-2 pr-4">Hours</th>
                             <th className="pb-2">Active Book</th>
+                            <th className="pb-2 pl-3">Delete</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -728,6 +819,17 @@ export default function App() {
                                 {row.active_book
                                   ? `${row.active_book} (${row.current_page ?? 0}/${row.total_pages ?? 0})`
                                   : "No active book"}
+                              </td>
+                              <td className="py-2 pl-3">
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteStudent(row.id, row.nickname, row.class_code)}
+                                  disabled={deleteBusyKey === `student-${row.id}`}
+                                  className="px-2 py-1 rounded-lg border border-rose-300 text-rose-600 hover:bg-rose-50 disabled:opacity-50"
+                                  title="Delete student"
+                                >
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
                               </td>
                             </tr>
                           ))}

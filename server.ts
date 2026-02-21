@@ -133,6 +133,11 @@ const parseNicknames = (value: unknown) => {
   return [];
 };
 
+const toPositiveInt = (value: unknown) => {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+
 const requireAdmin = (req: express.Request, res: express.Response) => {
   if (!ADMIN_ACCESS_CODE) {
     res.status(503).json({ error: "Admin access is not configured. Set ADMIN_ACCESS_CODE." });
@@ -449,6 +454,81 @@ async function startServer() {
       existing_count: existingCount,
       invalid_nicknames: invalidNicknames,
     });
+  });
+
+  app.delete("/api/admin/students", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+
+    const studentId = toPositiveInt(req.body?.student_id);
+    if (!studentId) {
+      return res.status(400).json({ error: "Invalid student_id" });
+    }
+
+    const deleteStudentData = db.transaction((id: number) => {
+      const deletedSessions = db.prepare("DELETE FROM sessions WHERE student_id = ?").run(id).changes;
+      const deletedBooks = db.prepare("DELETE FROM books WHERE student_id = ?").run(id).changes;
+      const deletedStats = db.prepare("DELETE FROM user_stats WHERE student_id = ?").run(id).changes;
+      const deletedStudents = db.prepare("DELETE FROM students WHERE id = ?").run(id).changes;
+
+      return {
+        deleted_students: deletedStudents,
+        deleted_sessions: deletedSessions,
+        deleted_books: deletedBooks,
+        deleted_stats: deletedStats,
+      };
+    });
+
+    return res.json(deleteStudentData(studentId));
+  });
+
+  app.delete("/api/admin/classes", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+
+    const classCode = normalizeClassCode(req.body?.class_code);
+    if (!CLASS_CODE_REGEX.test(classCode)) {
+      return res.status(400).json({ error: "Invalid class_code format" });
+    }
+
+    const deleteClassData = db.transaction((code: string) => {
+      const studentIds = db
+        .prepare("SELECT id FROM students WHERE class_code = ?")
+        .all(code) as Array<{ id: number }>;
+      const ids = studentIds.map((row) => row.id);
+
+      if (ids.length === 0) {
+        return {
+          class_code: code,
+          deleted_students: 0,
+          deleted_sessions: 0,
+          deleted_books: 0,
+          deleted_stats: 0,
+        };
+      }
+
+      const placeholders = ids.map(() => "?").join(",");
+      const deletedSessions = db
+        .prepare(`DELETE FROM sessions WHERE student_id IN (${placeholders})`)
+        .run(...ids).changes;
+      const deletedBooks = db
+        .prepare(`DELETE FROM books WHERE student_id IN (${placeholders})`)
+        .run(...ids).changes;
+      const deletedStats = db
+        .prepare(`DELETE FROM user_stats WHERE student_id IN (${placeholders})`)
+        .run(...ids).changes;
+      const deletedStudents = db
+        .prepare("DELETE FROM students WHERE class_code = ?")
+        .run(code).changes;
+
+      return {
+        class_code: code,
+        deleted_students: deletedStudents,
+        deleted_sessions: deletedSessions,
+        deleted_books: deletedBooks,
+        deleted_stats: deletedStats,
+      };
+    });
+
+    return res.json(deleteClassData(classCode));
   });
 
   // Vite middleware for development
