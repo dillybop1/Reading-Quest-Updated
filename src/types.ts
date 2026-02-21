@@ -10,6 +10,10 @@ export interface Book {
 export interface UserStats {
   total_xp: number;
   level: number;
+  coins: number;
+  total_coins_earned: number;
+  streak_days: number;
+  next_milestone_xp: number;
   total_sessions: number;
   total_hours: number;
   total_books: number;
@@ -21,6 +25,7 @@ export interface ReadingSession {
   end_page: number;
   chapters_finished: number;
   duration_minutes: number;
+  goal_minutes?: number;
   xp_earned: number;
 }
 
@@ -41,6 +46,8 @@ export interface AdminStudentRow {
   created_at: string;
   total_xp: number;
   level: number;
+  coins: number;
+  total_coins_earned: number;
   total_sessions: number;
   total_minutes: number;
   active_book: string | null;
@@ -79,4 +86,40 @@ export interface AdminReflectionSession {
 export interface AdminReflectionsResponse {
   reflections: AdminReflectionSession[];
   generated_at: string;
+}
+
+export interface SessionRewardSummary {
+  total_xp: number;
+  level: number;
+  coins: number;
+  xp_earned?: number;
+  streak_days?: number;
+  streak_multiplier?: number;
+  coins_earned: number;
+  milestone_bonus_coins: number;
+  overtime_bonus_coins?: number;
+  overtime_minutes?: number;
+  milestones_reached: number;
+}
+
+export interface RoomItemState {
+  key: string;
+  name: string;
+  description: string;
+  category: string;
+  cost_coins: number;
+  min_xp: number;
+  owned: boolean;
+  equipped: boolean;
+  unlocked: boolean;
+  pos_x: number | null;
+  pos_y: number | null;
+  z_index: number | null;
+}
+
+export interface RoomStateResponse {
+  total_xp: number;
+  coins: number;
+  next_milestone_xp: number;
+  items: RoomItemState[];
 }

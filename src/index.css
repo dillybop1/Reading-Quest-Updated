@@ -6,7 +6,26 @@
   --font-display: "Space Grotesk", sans-serif;
 }
 
+:root {
+  --app-font-size: clamp(13px, 0.36vw + 11.6px, 16px);
+}
+
+html {
+  font-size: var(--app-font-size);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
 body {
+  margin: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
   background-color: #f6efe3;
   color: #1e293b;
   transition: background-color 200ms ease, color 200ms ease;
@@ -36,12 +55,34 @@ body.dark-mode {
   margin-top: 0.5rem;
 }
 
+.bookshelf-wrap-bottom {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+}
+
+.bookshelf-stack-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding-right: 0.18rem;
+}
+
 .bookshelf-stack {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 0.55rem;
   margin-bottom: 0.35rem;
+}
+
+.bookshelf-stack-bottom {
+  margin-top: auto;
 }
 
 .bookshelf-board {
@@ -102,16 +143,554 @@ body.dark-mode {
   color: rgba(15, 23, 42, 0.82);
 }
 
+@keyframes roomCloudDrift {
+  0% {
+    transform: translateX(-18px);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateX(8px);
+    opacity: 0.65;
+  }
+  100% {
+    transform: translateX(24px);
+    opacity: 0.4;
+  }
+}
+
+@keyframes roomDustFloat {
+  0% {
+    transform: translateY(0);
+    opacity: 0.25;
+  }
+  50% {
+    transform: translateY(-4px);
+    opacity: 0.38;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 0.22;
+  }
+}
+
+@keyframes roomTwinkle {
+  0% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0.55;
+  }
+}
+
+.room-shell-active {
+  --room-item-scale: 1;
+  position: relative;
+  width: 100%;
+  border-radius: 0;
+  overflow: hidden;
+  padding-top: 3.15rem;
+  padding-bottom: 3.7rem;
+  background:
+    radial-gradient(900px 300px at 12% 2%, rgba(255, 255, 255, 0.2), transparent 62%),
+    radial-gradient(1200px 360px at 50% -8%, rgba(255, 255, 255, 0.35), transparent 62%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(150, 110, 70, 0.04) 0 14px,
+      rgba(150, 110, 70, 0) 14px 28px
+    ),
+    linear-gradient(180deg, #f4e7cf 0%, #f7efe0 68%, #d7b086 68%, #c89260 100%);
+}
+
+.room-frame {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+
+.room-frame::before {
+  content: "";
+  position: absolute;
+  left: 20%;
+  top: 9%;
+  width: 420px;
+  height: 180px;
+  background:
+    radial-gradient(circle at 20% 40%, rgba(255, 255, 255, 0.34) 0 2px, transparent 3px),
+    radial-gradient(circle at 52% 50%, rgba(255, 255, 255, 0.3) 0 2px, transparent 3px),
+    radial-gradient(circle at 76% 20%, rgba(255, 255, 255, 0.25) 0 2px, transparent 3px);
+  opacity: 0.28;
+  animation: roomDustFloat 5.5s ease-in-out infinite;
+}
+
+.room-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(500px 220px at 70% 15%, rgba(255, 255, 255, 0.2), transparent 68%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.08) 100%);
+  opacity: 0.25;
+}
+
+.room-content-layer {
+  position: relative;
+  z-index: 10;
+}
+
+.room-content-fit {
+  max-width: 42rem;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Room asset slots: replace these CSS-drawn classes with image/SVG backgrounds later.
+   Keys map cleanly to room-frame-* elements in App.tsx for open-source art swaps. */
+
+.room-shell-active .room-content-layer .quest-card {
+  padding: 1.05rem;
+}
+
+.room-shell-active .room-content-layer .space-y-6 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.85rem;
+}
+
+.room-shell-active .room-content-layer .space-y-4 > :not([hidden]) ~ :not([hidden]) {
+  margin-top: 0.65rem;
+}
+
+.room-frame-window {
+  position: absolute;
+  left: 1.25rem;
+  top: 0.95rem;
+  width: 104px;
+  height: 72px;
+  border: 2px solid #1e293b;
+  border-radius: 10px;
+  background: #bfdbfe;
+  box-shadow:
+    inset 0 -8px 0 rgba(15, 23, 42, 0.08),
+    0 3px 10px rgba(15, 23, 42, 0.14);
+  overflow: hidden;
+}
+
+.room-frame-window-sky {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(120px 54px at 80% 20%, rgba(255, 255, 255, 0.52), transparent 70%),
+    linear-gradient(180deg, #cfe6ff 0%, #88b8ec 100%);
+}
+
+.room-frame-window-cloud {
+  position: absolute;
+  left: 8px;
+  top: 20px;
+  width: 66px;
+  height: 20px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.68);
+  filter: blur(0.2px);
+  animation: roomCloudDrift 10s ease-in-out infinite alternate;
+}
+
+.room-frame-window::before {
+  content: "";
+  position: absolute;
+  left: 49px;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: rgba(30, 41, 59, 0.35);
+}
+
+.room-shell-active.has-curtains .room-frame-window::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 11px;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(248, 113, 113, 0.45) 0 24%,
+      transparent 24% 76%,
+      rgba(248, 113, 113, 0.45) 76% 100%
+    );
+}
+
+.room-frame-wall-art {
+  position: absolute;
+  left: 9.8rem;
+  top: 1.1rem;
+  width: 76px;
+  height: 58px;
+  border: 2px solid #1e293b;
+  border-radius: 10px;
+  background:
+    linear-gradient(135deg, rgba(34, 197, 94, 0.7), rgba(56, 189, 248, 0.7)),
+    linear-gradient(180deg, #e2e8f0 0%, #cbd5e1 100%);
+  box-shadow: 0 3px 7px rgba(15, 23, 42, 0.14);
+}
+
+.room-frame-baseboard {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(31% - 2px);
+  height: 10px;
+  border-top: 2px solid rgba(30, 41, 59, 0.28);
+  border-bottom: 2px solid rgba(30, 41, 59, 0.18);
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.room-frame-bed {
+  position: absolute;
+  right: 1.4rem;
+  bottom: 2.2rem;
+  width: 162px;
+  height: 62px;
+  border: 2px solid #1e293b;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.room-frame-bed::before {
+  content: "";
+  position: absolute;
+  left: 10px;
+  top: -13px;
+  width: 48px;
+  height: 19px;
+  border: 2px solid #1e293b;
+  border-radius: 8px;
+  background: #e2e8f0;
+}
+
+.room-frame-desk {
+  position: absolute;
+  left: 2.2rem;
+  bottom: 2.9rem;
+  width: 136px;
+  height: 12px;
+  background: #8b5e3c;
+  border: 2px solid #1e293b;
+  border-radius: 6px;
+}
+
+.room-frame-desk::before,
+.room-frame-desk::after {
+  content: "";
+  position: absolute;
+  top: 10px;
+  width: 8px;
+  height: 50px;
+  background: #8b5e3c;
+  border: 2px solid #1e293b;
+  border-top: 0;
+}
+
+.room-frame-desk::before {
+  left: 9px;
+}
+
+.room-frame-desk::after {
+  right: 9px;
+}
+
+.room-frame-computer {
+  position: absolute;
+  left: 5rem;
+  bottom: 4rem;
+  width: 44px;
+  height: 30px;
+  border: 2px solid #1e293b;
+  border-radius: 5px;
+  background: #cbd5e1;
+}
+
+.room-frame-bookshelf {
+  position: absolute;
+  right: 3.8rem;
+  bottom: 2rem;
+  width: 90px;
+  height: 188px;
+  border: 2px solid #1e293b;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #bf8551 0%, #8e603a 100%);
+  box-shadow:
+    inset 0 0 0 3px rgba(255, 255, 255, 0.08),
+    0 4px 10px rgba(15, 23, 42, 0.22);
+}
+
+.room-frame-bookshelf::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 44px;
+  height: 2px;
+  background: rgba(30, 41, 59, 0.6);
+  box-shadow:
+    0 42px 0 rgba(30, 41, 59, 0.6),
+    0 84px 0 rgba(30, 41, 59, 0.6),
+    0 126px 0 rgba(30, 41, 59, 0.6);
+}
+
+.room-frame-bookshelf::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 10px;
+  bottom: 10px;
+  border-radius: 4px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      #f59e0b 0 8px,
+      #22c55e 8px 13px,
+      #60a5fa 13px 18px,
+      #ef4444 18px 23px,
+      transparent 23px 28px
+    );
+  opacity: 0.9;
+}
+
+.room-frame-bookstack {
+  position: absolute;
+  right: 9.4rem;
+  bottom: 2.1rem;
+  width: 38px;
+  height: 30px;
+  border: 2px solid #1e293b;
+  border-radius: 4px;
+  background:
+    linear-gradient(180deg, #fbbf24 0 26%, #60a5fa 26% 52%, #22c55e 52% 78%, #f87171 78% 100%);
+  box-shadow: 0 3px 6px rgba(15, 23, 42, 0.15);
+}
+
+.room-frame-floor-detail {
+  position: absolute;
+  left: 50%;
+  bottom: 1.5rem;
+  width: 320px;
+  height: 16px;
+  transform: translateX(-50%);
+  border-radius: 9999px;
+  background:
+    radial-gradient(180px 10px at 50% 50%, rgba(255, 255, 255, 0.22), transparent 70%),
+    rgba(30, 41, 59, 0.16);
+}
+
+.room-frame-computer::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  bottom: -8px;
+  width: 10px;
+  height: 8px;
+  background: #94a3b8;
+  border: 2px solid #1e293b;
+  border-top: 0;
+}
+
+.room-frame-chair {
+  position: absolute;
+  left: 4.7rem;
+  bottom: 2.15rem;
+  width: 42px;
+  height: 28px;
+  border: 2px solid #1e293b;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #94a3b8 0%, #64748b 100%);
+}
+
+.room-frame-chair::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  top: -24px;
+  width: 14px;
+  height: 24px;
+  border: 2px solid #1e293b;
+  border-bottom: 0;
+  border-radius: 7px 7px 0 0;
+  background: #94a3b8;
+}
+
+.room-frame-item {
+  position: absolute;
+  border: 2px solid #1e293b;
+}
+
+.room-frame-rug {
+  left: 7.3rem;
+  bottom: 0.9rem;
+  width: 178px;
+  height: 42px;
+  border-radius: 9999px;
+  background: #fbbf24;
+}
+
+.room-frame-poster {
+  right: 12.2rem;
+  top: 1.3rem;
+  width: 58px;
+  height: 76px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, #60a5fa 0%, #34d399 100%);
+}
+
+.room-frame-plant {
+  left: 8.7rem;
+  bottom: 3.9rem;
+  width: 18px;
+  height: 20px;
+  border-radius: 3px;
+  background: #a16207;
+}
+
+.room-frame-plant::before {
+  content: "";
+  position: absolute;
+  left: -5px;
+  top: -13px;
+  width: 24px;
+  height: 16px;
+  border-radius: 9999px;
+  background: #22c55e;
+  border: 2px solid #1e293b;
+}
+
+.room-frame-blanket {
+  right: 1.65rem;
+  bottom: 2.3rem;
+  width: 150px;
+  height: 37px;
+  border-radius: 8px;
+  background: #0ea5e9;
+}
+
+.room-frame-lamp {
+  left: 2.9rem;
+  bottom: 4rem;
+  width: 10px;
+  height: 36px;
+  border-radius: 5px;
+  background: #475569;
+}
+
+.room-frame-lamp::before {
+  content: "";
+  position: absolute;
+  left: -10px;
+  top: -14px;
+  width: 30px;
+  height: 14px;
+  border-radius: 7px 7px 3px 3px;
+  background: #f59e0b;
+  border: 2px solid #1e293b;
+}
+
+.room-frame-lamp::after {
+  content: "";
+  position: absolute;
+  left: -26px;
+  top: -4px;
+  width: 62px;
+  height: 28px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(250, 204, 21, 0.5) 0%, rgba(250, 204, 21, 0) 70%);
+}
+
+.room-frame-lights {
+  right: 1rem;
+  top: 0.6rem;
+  width: 190px;
+  height: 12px;
+  border: 0;
+  background:
+    radial-gradient(circle at 8% 50%, #fde68a 0 5px, transparent 6px),
+    radial-gradient(circle at 30% 50%, #fde68a 0 5px, transparent 6px),
+    radial-gradient(circle at 52% 50%, #fde68a 0 5px, transparent 6px),
+    radial-gradient(circle at 74% 50%, #fde68a 0 5px, transparent 6px),
+    radial-gradient(circle at 96% 50%, #fde68a 0 5px, transparent 6px);
+  animation: roomTwinkle 2.8s ease-in-out infinite;
+}
+
+.room-frame-trophy {
+  right: 5.6rem;
+  bottom: 10.3rem;
+  width: 18px;
+  height: 24px;
+  border-radius: 0 0 6px 6px;
+  background: #eab308;
+}
+
+.room-frame-trophy::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: -16px;
+  width: 28px;
+  height: 18px;
+  border-radius: 10px 10px 5px 5px;
+  background: #facc15;
+  border: 2px solid #1e293b;
+}
+
+@media (max-width: 640px) {
+  .room-shell-active {
+    padding-top: 4.1rem;
+    padding-bottom: 4.6rem;
+  }
+
+  .room-frame-window,
+  .room-frame-wall-art,
+  .room-frame-baseboard,
+  .room-frame-bed,
+  .room-frame-desk,
+  .room-frame-chair,
+  .room-frame-computer,
+  .room-frame-bookshelf,
+  .room-frame-bookstack,
+  .room-frame-floor-detail,
+  .room-frame-item {
+    transform: scale(0.8);
+    transform-origin: top left;
+  }
+
+  .room-frame-bookstack,
+  .room-frame-bed,
+  .room-frame-bookshelf,
+  .room-frame-blanket,
+  .room-frame-trophy,
+  .room-frame-poster,
+  .room-frame-lights {
+    transform-origin: top right;
+  }
+}
+
 .quest-card {
   @apply bg-white rounded-3xl border-4 border-slate-900 shadow-[8px_8px_0px_0px_rgba(15,23,42,1)] p-6;
+  border-radius: clamp(1rem, 1.9vw, 1.5rem);
+  padding: clamp(1rem, 2vw, 1.5rem);
 }
 
 .quest-button {
   @apply bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold py-3 px-6 rounded-2xl border-b-4 border-amber-600 active:border-b-0 active:translate-y-1 transition-all;
+  border-radius: clamp(0.85rem, 1.8vw, 1rem);
+  padding: clamp(0.65rem, 1vw, 0.75rem) clamp(1rem, 2.2vw, 1.5rem);
 }
 
 .quest-input {
   @apply w-full bg-slate-50 border-2 border-slate-200 rounded-xl px-4 py-3 focus:border-amber-400 focus:outline-none transition-colors;
+  border-radius: clamp(0.65rem, 1.4vw, 0.8rem);
+  padding: clamp(0.6rem, 0.9vw, 0.75rem) clamp(0.85rem, 1.6vw, 1rem);
 }
 
 .theme-dark {
@@ -137,6 +716,79 @@ body.dark-mode {
 
 .theme-dark .book-spine.selected {
   box-shadow: 8px 6px 0 rgba(2, 6, 23, 0.75);
+}
+
+.theme-dark .room-shell-active {
+  background:
+    radial-gradient(1200px 360px at 50% -8%, rgba(255, 255, 255, 0.08), transparent 62%),
+    repeating-linear-gradient(
+      90deg,
+      rgba(148, 163, 184, 0.07) 0 14px,
+      rgba(148, 163, 184, 0) 14px 28px
+    ),
+    linear-gradient(180deg, #1e293b 0%, #1f2937 68%, #3f3f46 68%, #27272a 100%);
+}
+
+.theme-dark .room-frame::after {
+  opacity: 0.38;
+}
+
+.theme-dark .room-frame-window {
+  border-color: #334155;
+  background: #1e3a8a;
+}
+
+.theme-dark .room-frame-window-sky {
+  background:
+    radial-gradient(120px 54px at 80% 20%, rgba(255, 255, 255, 0.18), transparent 70%),
+    linear-gradient(180deg, #0f172a 0%, #1d4ed8 100%);
+}
+
+.theme-dark .room-frame-bed,
+.theme-dark .room-frame-bed::before,
+.theme-dark .room-frame-desk,
+.theme-dark .room-frame-desk::before,
+.theme-dark .room-frame-desk::after,
+.theme-dark .room-frame-chair,
+.theme-dark .room-frame-chair::before,
+.theme-dark .room-frame-computer,
+.theme-dark .room-frame-computer::before,
+.theme-dark .room-frame-bookshelf,
+.theme-dark .room-frame-bookstack,
+.theme-dark .room-frame-item,
+.theme-dark .room-frame-plant::before,
+.theme-dark .room-frame-lamp::before,
+.theme-dark .room-frame-wall-art,
+.theme-dark .room-frame-trophy::before {
+  border-color: #334155;
+}
+
+.theme-dark .room-frame-baseboard {
+  border-top-color: rgba(148, 163, 184, 0.3);
+  border-bottom-color: rgba(148, 163, 184, 0.2);
+  background: rgba(15, 23, 42, 0.24);
+}
+
+.theme-dark .room-frame-bookshelf {
+  background: linear-gradient(180deg, #6b4d2f 0%, #4a3420 100%);
+}
+
+.theme-dark .room-frame-bookshelf::before {
+  background: rgba(148, 163, 184, 0.55);
+  box-shadow:
+    0 42px 0 rgba(148, 163, 184, 0.55),
+    0 84px 0 rgba(148, 163, 184, 0.55),
+    0 126px 0 rgba(148, 163, 184, 0.55);
+}
+
+.theme-dark .room-frame-wall-art {
+  background:
+    linear-gradient(135deg, rgba(14, 165, 233, 0.45), rgba(34, 197, 94, 0.45)),
+    linear-gradient(180deg, #1f2937 0%, #111827 100%);
+}
+
+.theme-dark .room-frame-chair {
+  background: linear-gradient(180deg, #475569 0%, #334155 100%);
 }
 
 .theme-dark .quest-button {
@@ -203,4 +855,549 @@ body.dark-mode {
 .theme-dark .border-slate-200,
 .theme-dark .border-slate-100 {
   border-color: #334155 !important;
+}
+
+/* Open-source room art layers.
+   Drop images into /public/assets/room and they will appear automatically. */
+.room-frame {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.room-layer {
+  position: absolute;
+  inset: 0;
+  background-repeat: no-repeat;
+}
+
+.room-layer-wall {
+  background-image:
+    url("/assets/room/wall.png"),
+    linear-gradient(180deg, #f4e7cf 0%, #f7efe0 74%, transparent 74% 100%);
+  background-size: cover;
+  background-position: center top;
+}
+
+.room-layer-floor {
+  background-image:
+    url("/assets/room/floor.png"),
+    linear-gradient(180deg, transparent 0 68%, #d7b086 68%, #c89260 100%);
+  background-size: cover;
+  background-position: center bottom;
+}
+
+.room-layer-furniture {
+  background-image:
+    url("/assets/room/furniture.png"),
+    radial-gradient(70% 24% at 50% 90%, rgba(30, 41, 59, 0.2) 0%, transparent 100%);
+  background-size: contain, cover;
+  background-position: center bottom, center;
+}
+
+.room-layer-bookshelf {
+  background-image:
+    url("/assets/room/bookshelf.png"),
+    linear-gradient(
+      180deg,
+      transparent 0 62%,
+      rgba(251, 191, 36, 0.12) 62% 100%
+    );
+  background-size: contain, cover;
+  background-position: right 3% bottom 22%, center;
+}
+
+.room-item-sprite {
+  position: absolute;
+  transform: translate(-50%, -50%) scale(var(--room-item-scale));
+  background-repeat: no-repeat;
+  background-size: contain;
+  background-position: center;
+  pointer-events: none;
+  touch-action: none;
+  user-select: none;
+  filter: drop-shadow(0 5px 5px rgba(15, 23, 42, 0.18));
+}
+
+@media (max-width: 1280px) {
+  .room-shell-active {
+    --room-item-scale: 0.9;
+  }
+}
+
+@media (max-width: 1024px) {
+  .room-shell-active {
+    --room-item-scale: 0.82;
+  }
+}
+
+@media (max-width: 768px) {
+  .room-shell-active {
+    --room-item-scale: 0.74;
+  }
+}
+
+.room-item-sprite.is-editable {
+  pointer-events: auto;
+  cursor: grab;
+}
+
+.room-item-sprite.is-dragging {
+  cursor: grabbing;
+  filter: drop-shadow(0 9px 10px rgba(15, 23, 42, 0.28));
+}
+
+.room-item-sprite-small-plant {
+  width: 49px;
+  height: 60px;
+  background-image: url("/assets/room/small-plant.webp");
+}
+
+.room-item-sprite-cactus {
+  width: 67px;
+  height: 84px;
+  background-image: url("/assets/room/cactus.webp");
+}
+
+.room-item-sprite-small-blue-picture {
+  width: 82px;
+  height: 82px;
+  background-image: url("/assets/room/small-blue-picture.webp");
+}
+
+.room-item-sprite-small-yellow-picture {
+  width: 82px;
+  height: 82px;
+  background-image: url("/assets/room/small-yellow-picture.webp");
+}
+
+.room-item-sprite-wall-clock {
+  width: 100px;
+  height: 100px;
+  background-image: url("/assets/room/clock.webp");
+}
+
+.room-item-sprite-blue-chair {
+  width: 150px;
+  height: 150px;
+  background-image: url("/assets/room/blue-chair.webp");
+}
+
+.room-item-sprite-side-table {
+  width: 142px;
+  height: 142px;
+  background-image: url("/assets/room/side-table.webp");
+}
+
+.room-item-sprite-small-table {
+  width: 168px;
+  height: 118px;
+  background-image: url("/assets/room/small-table.webp");
+}
+
+.room-item-sprite-small-blue-sidetable {
+  width: 160px;
+  height: 130px;
+  background-image: url("/assets/room/small-blue-sidetable.webp");
+}
+
+.room-item-sprite-desk-lamp {
+  width: 104px;
+  height: 126px;
+  background-image: url("/assets/room/desk-lamp.webp");
+}
+
+.room-item-sprite-hanging-lamp {
+  width: 112px;
+  height: 132px;
+  background-image: url("/assets/room/hanging-lamp.webp");
+}
+
+.room-item-sprite-medium-potted-plant {
+  width: 97px;
+  height: 118px;
+  background-image: url("/assets/room/medium-potted-plant.webp");
+}
+
+.room-item-sprite-potion-rack {
+  width: 132px;
+  height: 132px;
+  background-image: url("/assets/room/potion-rack.webp");
+}
+
+.room-item-sprite-wizard-globe {
+  width: 102px;
+  height: 102px;
+  background-image: url("/assets/room/wizard-globe.webp");
+}
+
+.room-item-sprite-baby-dragon {
+  width: 142px;
+  height: 142px;
+  background-image: url("/assets/room/baby-dragon.webp");
+}
+
+.room-item-sprite-green-couch {
+  width: 248px;
+  height: 174px;
+  background-image: url("/assets/room/green-couch.webp");
+}
+
+.room-item-sprite-tree-hammock {
+  width: 262px;
+  height: 182px;
+  background-image: url("/assets/room/tree-hammock.webp");
+}
+
+.room-item-sprite-alarm-clock {
+  width: 92px;
+  height: 92px;
+  background-image: url("/assets/room/alarm-clock.webp");
+}
+
+.room-item-sprite-bean-bag {
+  width: 170px;
+  height: 132px;
+  background-image: url("/assets/room/bean-bag.webp");
+}
+
+.room-item-sprite-blue-bed {
+  width: 297px;
+  height: 193px;
+  background-image: url("/assets/room/blue-bed.webp");
+}
+
+.room-item-sprite-bookshelf-1 {
+  width: 218px;
+  height: 270px;
+  background-image: url("/assets/room/bookshelf-1.webp");
+}
+
+.room-item-sprite-bookshelf-2 {
+  width: 221px;
+  height: 270px;
+  background-image: url("/assets/room/bookshelf-2.webp");
+}
+
+.room-item-sprite-circle-mirror {
+  width: 112px;
+  height: 112px;
+  background-image: url("/assets/room/circle-mirror.webp");
+}
+
+.room-item-sprite-colorful-end-table {
+  width: 162px;
+  height: 122px;
+  background-image: url("/assets/room/colorful-end-table.webp");
+}
+
+.room-item-sprite-desk {
+  width: 312px;
+  height: 221px;
+  background-image: url("/assets/room/desk.webp");
+}
+
+.room-item-sprite-hamper {
+  width: 81px;
+  height: 88px;
+  background-image: url("/assets/room/hamper.webp");
+}
+
+.room-item-sprite-floor-lamp {
+  width: 110px;
+  height: 196px;
+  background-image: url("/assets/room/lamp.webp");
+}
+
+.room-item-sprite-multi-pictures {
+  width: 156px;
+  height: 108px;
+  background-image: url("/assets/room/multi-pictures.webp");
+}
+
+.room-item-sprite-pink-bed {
+  width: 297px;
+  height: 193px;
+  background-image: url("/assets/room/pink-bed.webp");
+}
+
+.room-item-sprite-radio {
+  width: 65px;
+  height: 53px;
+  background-image: url("/assets/room/radio.webp");
+}
+
+.room-item-sprite-rectangle-windows {
+  width: 250px;
+  height: 154px;
+  background-image: url("/assets/room/rectangle-windows.webp");
+}
+
+.room-item-sprite-rounded-window {
+  width: 173px;
+  height: 158px;
+  background-image: url("/assets/room/rounded-window.webp");
+}
+
+.room-item-sprite-slippers {
+  width: 78px;
+  height: 56px;
+  background-image: url("/assets/room/slippers.webp");
+}
+
+.room-item-sprite-small-plant-2 {
+  width: 53px;
+  height: 105px;
+  background-image: url("/assets/room/small-plant-2.webp");
+}
+
+.room-layer-atmosphere {
+  background-image:
+    url("/assets/room/atmosphere.png"),
+    radial-gradient(900px 260px at 52% -6%, rgba(255, 255, 255, 0.28), transparent 72%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.07) 100%);
+  background-size: cover, cover, cover;
+  background-position: center;
+  animation: roomDustFloat 5.5s ease-in-out infinite;
+}
+
+.theme-dark .room-layer-wall {
+  background-image:
+    url("/assets/room/wall-dark.png"),
+    linear-gradient(180deg, #1e293b 0%, #1f2937 74%, transparent 74% 100%);
+}
+
+.theme-dark .room-layer-floor {
+  background-image:
+    url("/assets/room/floor-dark.png"),
+    linear-gradient(180deg, transparent 0 68%, #3f3f46 68%, #27272a 100%);
+}
+
+.theme-dark .room-layer-furniture {
+  filter: brightness(0.82) saturate(0.9);
+}
+
+.theme-dark .room-layer-bookshelf {
+  filter: brightness(0.85);
+}
+
+.theme-dark .room-layer-atmosphere {
+  background-image:
+    url("/assets/room/atmosphere-dark.png"),
+    radial-gradient(900px 260px at 52% -6%, rgba(255, 255, 255, 0.1), transparent 72%),
+    linear-gradient(180deg, rgba(15, 23, 42, 0) 0%, rgba(15, 23, 42, 0.14) 100%);
+}
+
+.theme-dark .room-item-sprite {
+  filter: brightness(0.92) saturate(0.92) drop-shadow(0 5px 6px rgba(2, 6, 23, 0.45));
+}
+
+.theme-dark .room-item-sprite.is-editable {
+  filter: brightness(0.92) saturate(0.92) drop-shadow(0 5px 6px rgba(2, 6, 23, 0.45));
+}
+
+@media (max-width: 640px) {
+  .room-shell-active {
+    --room-item-scale: 1;
+  }
+
+  .room-layer-bookshelf {
+    background-size: 150px auto, cover;
+    background-position: right -8px bottom 20%, center;
+  }
+
+  .room-item-sprite-small-plant {
+    width: 36px;
+    height: 46px;
+  }
+
+  .room-item-sprite-cactus {
+    width: 50px;
+    height: 63px;
+  }
+
+  .room-item-sprite-small-blue-picture,
+  .room-item-sprite-small-yellow-picture {
+    width: 64px;
+    height: 64px;
+  }
+
+  .room-item-sprite-wall-clock {
+    width: 74px;
+    height: 74px;
+  }
+
+  .room-item-sprite-blue-chair {
+    width: 108px;
+    height: 108px;
+  }
+
+  .room-item-sprite-side-table,
+  .room-item-sprite-small-blue-sidetable {
+    width: 112px;
+    height: 92px;
+  }
+
+  .room-item-sprite-small-table {
+    width: 120px;
+    height: 84px;
+  }
+
+  .room-item-sprite-desk-lamp,
+  .room-item-sprite-hanging-lamp {
+    width: 78px;
+    height: 94px;
+  }
+
+  .room-item-sprite-medium-potted-plant {
+    width: 70px;
+    height: 87px;
+  }
+
+  .room-item-sprite-potion-rack,
+  .room-item-sprite-wizard-globe {
+    width: 78px;
+    height: 78px;
+  }
+
+  .room-item-sprite-baby-dragon {
+    width: 104px;
+    height: 104px;
+  }
+
+  .room-item-sprite-green-couch {
+    width: 176px;
+    height: 124px;
+  }
+
+  .room-item-sprite-tree-hammock {
+    width: 178px;
+    height: 126px;
+  }
+
+  .room-item-sprite-alarm-clock {
+    width: 70px;
+    height: 70px;
+  }
+
+  .room-item-sprite-bean-bag {
+    width: 120px;
+    height: 94px;
+  }
+
+  .room-item-sprite-blue-bed,
+  .room-item-sprite-pink-bed {
+    width: 202px;
+    height: 133px;
+  }
+
+  .room-item-sprite-bookshelf-1,
+  .room-item-sprite-bookshelf-2 {
+    width: 159px;
+    height: 195px;
+  }
+
+  .room-item-sprite-circle-mirror {
+    width: 80px;
+    height: 80px;
+  }
+
+  .room-item-sprite-colorful-end-table {
+    width: 116px;
+    height: 88px;
+  }
+
+  .room-item-sprite-desk {
+    width: 218px;
+    height: 156px;
+  }
+
+  .room-item-sprite-hamper {
+    width: 57px;
+    height: 63px;
+  }
+
+  .room-item-sprite-floor-lamp {
+    width: 78px;
+    height: 140px;
+  }
+
+  .room-item-sprite-multi-pictures {
+    width: 112px;
+    height: 78px;
+  }
+
+  .room-item-sprite-radio {
+    width: 46px;
+    height: 37px;
+  }
+
+  .room-item-sprite-rectangle-windows {
+    width: 175px;
+    height: 108px;
+  }
+
+  .room-item-sprite-rounded-window {
+    width: 122px;
+    height: 113px;
+  }
+
+  .room-item-sprite-slippers {
+    width: 56px;
+    height: 40px;
+  }
+
+  .room-item-sprite-small-plant-2 {
+    width: 39px;
+    height: 78px;
+  }
+}
+
+/* Room tab scroll + frame polish */
+.room-tab-frame {
+  box-shadow: 8px 8px 0 0 rgba(15, 23, 42, 1);
+}
+
+.room-shop-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #b45309 rgba(245, 222, 186, 0.72);
+}
+
+.room-shop-scroll::-webkit-scrollbar {
+  width: 12px;
+}
+
+.room-shop-scroll::-webkit-scrollbar-track {
+  background: rgba(245, 222, 186, 0.72);
+  border-radius: 9999px;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+}
+
+.room-shop-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #f59e0b 0%, #b45309 100%);
+  border-radius: 9999px;
+  border: 2px solid rgba(255, 255, 255, 0.68);
+}
+
+.room-shop-scroll::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #fbbf24 0%, #c2410c 100%);
+}
+
+.theme-dark .room-tab-frame {
+  box-shadow: 8px 8px 0 0 rgba(2, 6, 23, 0.9);
+}
+
+.theme-dark .room-shop-scroll {
+  scrollbar-color: #f59e0b rgba(30, 41, 59, 0.7);
+}
+
+.theme-dark .room-shop-scroll::-webkit-scrollbar-track {
+  background: rgba(30, 41, 59, 0.7);
+  border-color: rgba(71, 85, 105, 0.85);
+}
+
+.theme-dark .room-shop-scroll::-webkit-scrollbar-thumb {
+  border-color: rgba(15, 23, 42, 0.88);
 }

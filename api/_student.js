@@ -63,8 +63,8 @@ export const resolveStudent = async (req) => {
 
   await query(
     `
-      INSERT INTO user_stats (student_id, total_xp, level)
-      VALUES ($1, 0, 1)
+      INSERT INTO user_stats (student_id, total_xp, level, coins, total_coins_earned)
+      VALUES ($1, 0, 1, 0, 0)
       ON CONFLICT (student_id) DO NOTHING
     `,
     [studentId]
