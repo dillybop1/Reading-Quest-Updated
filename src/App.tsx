@@ -25,6 +25,7 @@ import {
   AdminRosterResponse,
   AdminCreateStudentsResponse,
   AdminReflectionsResponse,
+  RoomItemState,
   RoomStateResponse,
   SessionRewardSummary,
 } from "./types";
@@ -34,6 +35,97 @@ const THEME_STORAGE_KEY = "reading-quest-theme";
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
 const BOOK_SPINE_COLORS = ["#f59e0b", "#0ea5e9", "#22c55e", "#ef4444", "#14b8a6", "#f97316"];
+const ROOM_POSITION_MIN = 2;
+const ROOM_POSITION_MAX = 98;
+const ROOM_Z_INDEX_MIN = 1;
+const ROOM_Z_INDEX_MAX = 999;
+
+type RoomSpriteConfig = {
+  className: string;
+  defaultX: number;
+  defaultY: number;
+  defaultZ: number;
+};
+type RoomLayoutSnapshot = Record<
+  string,
+  {
+    pos_x: number | null;
+    pos_y: number | null;
+    z_index: number | null;
+  }
+>;
+
+const ROOM_SPRITE_CONFIG: Record<string, RoomSpriteConfig> = {
+  small_plant: { className: "room-item-sprite-small-plant", defaultX: 23, defaultY: 80, defaultZ: 27 },
+  cactus: { className: "room-item-sprite-cactus", defaultX: 30, defaultY: 84, defaultZ: 25 },
+  small_blue_picture: { className: "room-item-sprite-small-blue-picture", defaultX: 26, defaultY: 23, defaultZ: 19 },
+  small_yellow_picture: { className: "room-item-sprite-small-yellow-picture", defaultX: 76, defaultY: 24, defaultZ: 19 },
+  wall_clock: { className: "room-item-sprite-wall-clock", defaultX: 50, defaultY: 13, defaultZ: 20 },
+  blue_chair: { className: "room-item-sprite-blue-chair", defaultX: 17, defaultY: 85, defaultZ: 18 },
+  side_table: { className: "room-item-sprite-side-table", defaultX: 23, defaultY: 90, defaultZ: 16 },
+  small_table: { className: "room-item-sprite-small-table", defaultX: 58, defaultY: 90, defaultZ: 15 },
+  small_blue_sidetable: { className: "room-item-sprite-small-blue-sidetable", defaultX: 39, defaultY: 89, defaultZ: 16 },
+  desk_lamp: { className: "room-item-sprite-desk-lamp", defaultX: 12, defaultY: 76, defaultZ: 29 },
+  hanging_lamp: { className: "room-item-sprite-hanging-lamp", defaultX: 66, defaultY: 19, defaultZ: 30 },
+  medium_potted_plant: { className: "room-item-sprite-medium-potted-plant", defaultX: 86, defaultY: 84, defaultZ: 22 },
+  potion_rack: { className: "room-item-sprite-potion-rack", defaultX: 88, defaultY: 70, defaultZ: 24 },
+  wizard_globe: { className: "room-item-sprite-wizard-globe", defaultX: 35, defaultY: 73, defaultZ: 26 },
+  baby_dragon: { className: "room-item-sprite-baby-dragon", defaultX: 85, defaultY: 24, defaultZ: 21 },
+  green_couch: { className: "room-item-sprite-green-couch", defaultX: 67, defaultY: 84, defaultZ: 17 },
+  tree_hammock: { className: "room-item-sprite-tree-hammock", defaultX: 49, defaultY: 64, defaultZ: 14 },
+  alarm_clock: { className: "room-item-sprite-alarm-clock", defaultX: 40, defaultY: 73, defaultZ: 28 },
+  bean_bag: { className: "room-item-sprite-bean-bag", defaultX: 78, defaultY: 88, defaultZ: 18 },
+  blue_bed: { className: "room-item-sprite-blue-bed", defaultX: 85, defaultY: 84, defaultZ: 13 },
+  bookshelf_1: { className: "room-item-sprite-bookshelf-1", defaultX: 8, defaultY: 66, defaultZ: 16 },
+  bookshelf_2: { className: "room-item-sprite-bookshelf-2", defaultX: 94, defaultY: 66, defaultZ: 16 },
+  circle_mirror: { className: "room-item-sprite-circle-mirror", defaultX: 77, defaultY: 16, defaultZ: 21 },
+  colorful_end_table: { className: "room-item-sprite-colorful-end-table", defaultX: 55, defaultY: 89, defaultZ: 18 },
+  desk: { className: "room-item-sprite-desk", defaultX: 20, defaultY: 82, defaultZ: 17 },
+  hamper: { className: "room-item-sprite-hamper", defaultX: 10, defaultY: 89, defaultZ: 14 },
+  floor_lamp: { className: "room-item-sprite-floor-lamp", defaultX: 31, defaultY: 74, defaultZ: 24 },
+  multi_pictures: { className: "room-item-sprite-multi-pictures", defaultX: 55, defaultY: 21, defaultZ: 21 },
+  pink_bed: { className: "room-item-sprite-pink-bed", defaultX: 84, defaultY: 84, defaultZ: 13 },
+  radio: { className: "room-item-sprite-radio", defaultX: 43, defaultY: 77, defaultZ: 29 },
+  rectangle_windows: { className: "room-item-sprite-rectangle-windows", defaultX: 49, defaultY: 17, defaultZ: 20 },
+  rounded_window: { className: "room-item-sprite-rounded-window", defaultX: 24, defaultY: 17, defaultZ: 20 },
+  slippers: { className: "room-item-sprite-slippers", defaultX: 71, defaultY: 93, defaultZ: 27 },
+  small_plant_2: { className: "room-item-sprite-small-plant-2", defaultX: 26, defaultY: 82, defaultZ: 27 },
+};
+
+const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const isFiniteNumber = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
+
+const buildRoomLayoutSnapshot = (state: RoomStateResponse | null): RoomLayoutSnapshot => {
+  const snapshot: RoomLayoutSnapshot = {};
+  if (!state?.items?.length) return snapshot;
+
+  for (const item of state.items) {
+    if (!item.owned || !ROOM_SPRITE_CONFIG[item.key]) continue;
+    snapshot[item.key] = {
+      pos_x: isFiniteNumber(item.pos_x) ? item.pos_x : null,
+      pos_y: isFiniteNumber(item.pos_y) ? item.pos_y : null,
+      z_index: isFiniteNumber(item.z_index) ? item.z_index : null,
+    };
+  }
+
+  return snapshot;
+};
+
+const getRoomSpriteLayout = (item: Pick<RoomItemState, "key" | "pos_x" | "pos_y" | "z_index">) => {
+  const config = ROOM_SPRITE_CONFIG[item.key];
+  const fallback = { x: 50, y: 50, z: ROOM_Z_INDEX_MIN };
+  if (!config) return fallback;
+
+  const x = typeof item.pos_x === "number" ? item.pos_x : config.defaultX;
+  const y = typeof item.pos_y === "number" ? item.pos_y : config.defaultY;
+  const z = typeof item.z_index === "number" ? item.z_index : config.defaultZ;
+
+  return {
+    x: clampNumber(x, ROOM_POSITION_MIN, ROOM_POSITION_MAX),
+    y: clampNumber(y, ROOM_POSITION_MIN, ROOM_POSITION_MAX),
+    z: clampNumber(z, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX),
+  };
+};
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
@@ -101,6 +193,16 @@ export default function App() {
   const [roomState, setRoomState] = useState<RoomStateResponse | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
   const [roomBusyKey, setRoomBusyKey] = useState<string | null>(null);
+  const [isRoomCustomizeMode, setIsRoomCustomizeMode] = useState(false);
+  const [roomLayoutSavingKey, setRoomLayoutSavingKey] = useState<string | null>(null);
+  const [roomCustomizeSnapshot, setRoomCustomizeSnapshot] = useState<RoomLayoutSnapshot | null>(null);
+  const [roomDragState, setRoomDragState] = useState<{
+    itemKey: string;
+    offsetXPct: number;
+    offsetYPct: number;
+  } | null>(null);
+  const roomFrameRef = useRef<HTMLDivElement | null>(null);
+  const roomStateRef = useRef<RoomStateResponse | null>(null);
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
@@ -151,6 +253,18 @@ export default function App() {
       if (adminTapResetRef.current) clearTimeout(adminTapResetRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    roomStateRef.current = roomState;
+  }, [roomState]);
+
+  useEffect(() => {
+    if (view !== "room") {
+      setIsRoomCustomizeMode(false);
+      setRoomDragState(null);
+      setRoomCustomizeSnapshot(null);
+    }
+  }, [view]);
 
   const parseNumberInput = (value: string, fallback = 0) => {
     const parsed = Number.parseInt(value, 10);
@@ -262,6 +376,29 @@ export default function App() {
       (a, b) => getTimestampValue(b.latest_timestamp) - getTimestampValue(a.latest_timestamp)
     );
   }, [filteredReflectionSessions]);
+
+  const equippedRoomSprites = useMemo(() => {
+    if (!roomState?.items?.length) return [];
+
+    return roomState.items
+      .filter((item) => item.equipped && Boolean(ROOM_SPRITE_CONFIG[item.key]))
+      .map((item) => ({
+        item,
+        config: ROOM_SPRITE_CONFIG[item.key],
+        layout: getRoomSpriteLayout(item),
+      }))
+      .sort((a, b) => a.layout.z - b.layout.z);
+  }, [roomState]);
+
+  const hasPositionableEquippedRoomItems = equippedRoomSprites.length > 0;
+
+  useEffect(() => {
+    if (!hasPositionableEquippedRoomItems) {
+      setIsRoomCustomizeMode(false);
+      setRoomDragState(null);
+      setRoomCustomizeSnapshot(null);
+    }
+  }, [hasPositionableEquippedRoomItems]);
 
   useEffect(() => {
     if (responsesStudentFilter === "all") return;
@@ -428,6 +565,200 @@ export default function App() {
       setRoomBusyKey(null);
     }
   };
+
+  const setRoomItemLayoutLocally = (itemKey: string, x: number, y: number, z: number) => {
+    setRoomState((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        items: prev.items.map((item) =>
+          item.key === itemKey
+            ? {
+                ...item,
+                pos_x: clampNumber(x, ROOM_POSITION_MIN, ROOM_POSITION_MAX),
+                pos_y: clampNumber(y, ROOM_POSITION_MIN, ROOM_POSITION_MAX),
+                z_index: clampNumber(z, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX),
+              }
+            : item
+        ),
+      };
+    });
+  };
+
+  const handleRoomLayoutSave = async (itemKey: string, x: number, y: number, z: number) => {
+    if (!student) return;
+    setRoomLayoutSavingKey(itemKey);
+    setRoomError(null);
+
+    try {
+      const response = await fetch("/api/room", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "update_layout",
+          item_key: itemKey,
+          pos_x: Number(clampNumber(x, ROOM_POSITION_MIN, ROOM_POSITION_MAX).toFixed(2)),
+          pos_y: Number(clampNumber(y, ROOM_POSITION_MIN, ROOM_POSITION_MAX).toFixed(2)),
+          z_index: Math.round(clampNumber(z, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX)),
+          class_code: student.class_code,
+          nickname: student.nickname,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Layout save failed: ${response.status}`);
+      }
+
+      setRoomState(data as RoomStateResponse);
+    } catch (err: any) {
+      setRoomError(String(err?.message ?? err));
+    } finally {
+      setRoomLayoutSavingKey(null);
+    }
+  };
+
+  const handleStartRoomCustomization = () => {
+    setRoomCustomizeSnapshot(buildRoomLayoutSnapshot(roomStateRef.current));
+    setRoomError(null);
+    setRoomDragState(null);
+    setIsRoomCustomizeMode(true);
+  };
+
+  const handleFinishRoomCustomization = () => {
+    setRoomDragState(null);
+    setIsRoomCustomizeMode(false);
+    setRoomCustomizeSnapshot(null);
+  };
+
+  const handleResetRoomLayout = async () => {
+    if (!student || !roomCustomizeSnapshot) return;
+    setRoomLayoutSavingKey("snapshot");
+    setRoomError(null);
+    setRoomDragState(null);
+
+    try {
+      const entries = Object.entries(roomCustomizeSnapshot) as Array<
+        [string, { pos_x: number | null; pos_y: number | null; z_index: number | null }]
+      >;
+      await Promise.all(
+        entries.map(async ([itemKey, layout]) => {
+          const hasExactPosition =
+            isFiniteNumber(layout.pos_x) && isFiniteNumber(layout.pos_y) && isFiniteNumber(layout.z_index);
+          const payload = hasExactPosition
+            ? {
+                action: "update_layout",
+                item_key: itemKey,
+                pos_x: Number(clampNumber(layout.pos_x, ROOM_POSITION_MIN, ROOM_POSITION_MAX).toFixed(2)),
+                pos_y: Number(clampNumber(layout.pos_y, ROOM_POSITION_MIN, ROOM_POSITION_MAX).toFixed(2)),
+                z_index: Math.round(clampNumber(layout.z_index, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX)),
+                class_code: student.class_code,
+                nickname: student.nickname,
+              }
+            : {
+                action: "reset_layout",
+                item_key: itemKey,
+                class_code: student.class_code,
+                nickname: student.nickname,
+              };
+
+          const response = await fetch("/api/room", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(typeof data?.error === "string" ? data.error : `Layout reset failed: ${response.status}`);
+          }
+        })
+      );
+
+      await loadRoomState();
+    } catch (err: any) {
+      setRoomError(String(err?.message ?? err));
+    } finally {
+      setRoomLayoutSavingKey(null);
+    }
+  };
+
+  const handleRoomItemPointerDown = (event: React.PointerEvent<HTMLDivElement>, itemKey: string) => {
+    if (!isRoomCustomizeMode || view !== "room" || event.button !== 0) return;
+
+    const frameRect = roomFrameRef.current?.getBoundingClientRect();
+    const currentState = roomStateRef.current;
+    if (!frameRect || !currentState || frameRect.width <= 0 || frameRect.height <= 0) return;
+
+    const item = currentState.items.find((entry) => entry.key === itemKey && entry.equipped);
+    if (!item) return;
+
+    event.preventDefault();
+    const currentLayout = getRoomSpriteLayout(item);
+    const pointerXPct = ((event.clientX - frameRect.left) / frameRect.width) * 100;
+    const pointerYPct = ((event.clientY - frameRect.top) / frameRect.height) * 100;
+
+    const maxCurrentZ = currentState.items.reduce((max, entry) => {
+      const config = ROOM_SPRITE_CONFIG[entry.key];
+      if (!entry.equipped || !config) return max;
+      const layout = getRoomSpriteLayout(entry);
+      return Math.max(max, layout.z);
+    }, ROOM_Z_INDEX_MIN);
+    const nextZ = clampNumber(maxCurrentZ + 1, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX);
+
+    setRoomItemLayoutLocally(itemKey, currentLayout.x, currentLayout.y, nextZ);
+    setRoomDragState({
+      itemKey,
+      offsetXPct: currentLayout.x - pointerXPct,
+      offsetYPct: currentLayout.y - pointerYPct,
+    });
+  };
+
+  useEffect(() => {
+    if (!roomDragState || !isRoomCustomizeMode || view !== "room") return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const frameRect = roomFrameRef.current?.getBoundingClientRect();
+      if (!frameRect || frameRect.width <= 0 || frameRect.height <= 0) return;
+
+      const pointerXPct = ((event.clientX - frameRect.left) / frameRect.width) * 100;
+      const pointerYPct = ((event.clientY - frameRect.top) / frameRect.height) * 100;
+      const nextX = clampNumber(pointerXPct + roomDragState.offsetXPct, ROOM_POSITION_MIN, ROOM_POSITION_MAX);
+      const nextY = clampNumber(pointerYPct + roomDragState.offsetYPct, ROOM_POSITION_MIN, ROOM_POSITION_MAX);
+      const currentState = roomStateRef.current;
+      const currentItem = currentState?.items.find((entry) => entry.key === roomDragState.itemKey);
+      const currentZ = getRoomSpriteLayout({
+        key: roomDragState.itemKey,
+        pos_x: currentItem?.pos_x ?? null,
+        pos_y: currentItem?.pos_y ?? null,
+        z_index: currentItem?.z_index ?? null,
+      }).z;
+
+      setRoomItemLayoutLocally(roomDragState.itemKey, nextX, nextY, currentZ);
+    };
+
+    const handlePointerUp = () => {
+      const currentState = roomStateRef.current;
+      const currentItem = currentState?.items.find((entry) => entry.key === roomDragState.itemKey);
+      if (!currentItem) {
+        setRoomDragState(null);
+        return;
+      }
+
+      const { x, y, z } = getRoomSpriteLayout(currentItem);
+      void handleRoomLayoutSave(roomDragState.itemKey, x, y, z);
+      setRoomDragState(null);
+    };
+
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerUp);
+
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerUp);
+    };
+  }, [roomDragState, isRoomCustomizeMode, view]);
 
   const handleHiddenAdminTap = () => {
     setAdminTapCount((prev) => {
@@ -988,14 +1319,25 @@ export default function App() {
     }
   };
 
-  const isRoomItemEquipped = (itemKey: string) => Boolean(roomState?.items?.some((item) => item.key === itemKey && item.equipped));
   const showRoomShell = Boolean(student) && view !== "student" && view !== "admin" && view !== "loading";
+  const canEditRoomLayout = isRoomCustomizeMode && view === "room";
+  const showAppChrome = !canEditRoomLayout;
   const appShellClassName = showRoomShell
     ? "h-screen w-full room-shell-active overflow-hidden"
     : "min-h-screen p-4 md:p-8 max-w-2xl mx-auto";
   const contentShellClassName = showRoomShell
-    ? "room-content-layer max-w-2xl mx-auto p-3 md:p-4 h-full flex flex-col"
+    ? canEditRoomLayout
+      ? "room-content-layer h-full pointer-events-none"
+      : "room-content-layer max-w-2xl mx-auto p-3 md:p-4 h-full flex flex-col"
     : "";
+  const mainAreaClassName = showRoomShell
+    ? "flex-1 min-h-0"
+    : "";
+  const showFooterStats = Boolean(
+    stats &&
+      (view === "dashboard" || (view === "bookshelf" && !showAddBookForm)) &&
+      showAppChrome
+  );
 
   if (view === "loading") {
     return (
@@ -1031,46 +1373,76 @@ export default function App() {
     <div
       className={`${appShellClassName} ${
         view === "student" ? "student-shell" : ""
-      } ${
-        isRoomItemEquipped("window_curtains") ? "has-curtains" : ""
       } ${isDarkMode ? "theme-dark" : "theme-light"}`}
     >
-      <button
-        type="button"
-        onClick={() => setIsDarkMode((prev) => !prev)}
-        className={`fixed right-4 top-4 z-40 rounded-xl border-2 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
-          isDarkMode
-            ? "border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700"
-            : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
-        }`}
-        title="Toggle dark mode"
-      >
-        <span className="flex items-center gap-2">
-          {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          {isDarkMode ? "Light" : "Dark"}
-        </span>
-      </button>
+      {showAppChrome && (
+        <button
+          type="button"
+          onClick={() => setIsDarkMode((prev) => !prev)}
+          className={`fixed right-4 top-4 z-40 rounded-xl border-2 px-3 py-2 text-xs font-bold uppercase tracking-wide transition-colors ${
+            isDarkMode
+              ? "border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700"
+              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+          }`}
+          title="Toggle dark mode"
+        >
+          <span className="flex items-center gap-2">
+            {isDarkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            {isDarkMode ? "Light" : "Dark"}
+          </span>
+        </button>
+      )}
 
       {showRoomShell && (
-        <div className="room-frame" aria-hidden="true">
-          <div className="room-frame-window" />
-          <div className="room-frame-bookshelf" />
-          <div className="room-frame-bed" />
-          <div className="room-frame-desk" />
-          <div className="room-frame-computer" />
-          <div className="room-frame-floor-detail" />
-          {isRoomItemEquipped("cozy_rug") && <div className="room-frame-item room-frame-rug" />}
-          {isRoomItemEquipped("wall_poster") && <div className="room-frame-item room-frame-poster" />}
-          {isRoomItemEquipped("desk_plant") && <div className="room-frame-item room-frame-plant" />}
-          {isRoomItemEquipped("bed_blanket") && <div className="room-frame-item room-frame-blanket" />}
-          {isRoomItemEquipped("desk_lamp") && <div className="room-frame-item room-frame-lamp" />}
-          {isRoomItemEquipped("string_lights") && <div className="room-frame-item room-frame-lights" />}
-          {isRoomItemEquipped("book_trophy") && <div className="room-frame-item room-frame-trophy" />}
+        <div className="room-frame" ref={roomFrameRef}>
+          <div className="room-layer room-layer-wall" />
+          <div className="room-layer room-layer-floor" />
+          <div className="room-layer room-layer-furniture" />
+          <div className="room-layer room-layer-bookshelf" />
+          {equippedRoomSprites.map(({ item, config, layout }) => (
+            <div
+              key={item.key}
+              className={`room-item-sprite ${config.className} ${
+                canEditRoomLayout ? "is-editable" : ""
+              } ${roomDragState?.itemKey === item.key ? "is-dragging" : ""}`}
+              style={{
+                left: `${layout.x}%`,
+                top: `${layout.y}%`,
+                zIndex: 20 + layout.z,
+              }}
+              onPointerDown={(event) => handleRoomItemPointerDown(event, item.key)}
+              title={canEditRoomLayout ? `Drag ${item.name}` : undefined}
+            />
+          ))}
+          <div className="room-layer room-layer-atmosphere" />
         </div>
       )}
 
       <div className={contentShellClassName}>
+      {canEditRoomLayout && (
+        <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2 flex flex-wrap items-center justify-center gap-2 rounded-2xl border-2 border-slate-900 bg-white/95 px-3 py-2 shadow-lg pointer-events-auto">
+          <button
+            type="button"
+            onClick={handleFinishRoomCustomization}
+            disabled={roomLayoutSavingKey === "snapshot"}
+            className="py-2 px-4 rounded-xl border-2 border-emerald-300 bg-emerald-100 text-emerald-800 font-bold disabled:opacity-50"
+          >
+            Finish Customizing
+          </button>
+          <button
+            type="button"
+            onClick={handleResetRoomLayout}
+            disabled={roomLayoutSavingKey === "snapshot"}
+            className="py-2 px-4 rounded-xl border-2 border-amber-300 bg-amber-100 text-amber-800 font-bold disabled:opacity-50"
+          >
+            {roomLayoutSavingKey === "snapshot" ? "Resetting..." : "Reset"}
+          </button>
+          {roomError && <p className="text-sm font-semibold text-rose-600">{roomError}</p>}
+        </div>
+      )}
 
+      {showAppChrome && (
+      <>
       {/* Header / XP Bar */}
       {student && view !== "student" && view !== "admin" && (
         <header className={showRoomShell ? "mb-3" : "mb-8"}>
@@ -1125,7 +1497,7 @@ export default function App() {
         </header>
       )}
 
-      <main className={showRoomShell ? "flex-1 min-h-0" : ""}>
+      <main className={mainAreaClassName}>
       <AnimatePresence mode="wait">
         {view === "student" && (
           <motion.div
@@ -1709,9 +2081,9 @@ export default function App() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="space-y-6"
+            className={showRoomShell ? "h-full" : "space-y-6"}
           >
-            <div className="quest-card">
+            <div className={`quest-card ${showRoomShell ? "h-full flex flex-col room-tab-frame" : ""}`}>
               <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
                 <div>
                   <h2 className="text-2xl font-bold">My Reading Room</h2>
@@ -1722,13 +2094,23 @@ export default function App() {
                     Every 500 XP milestone grants a bonus coin reward.
                   </p>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setView("bookshelf")}
-                  className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
-                >
-                  Back to Bookshelf
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={handleStartRoomCustomization}
+                    disabled={!hasPositionableEquippedRoomItems || Boolean(roomLayoutSavingKey)}
+                    className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Customize Room
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView("bookshelf")}
+                    className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+                  >
+                    Back to Bookshelf
+                  </button>
+                </div>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
@@ -1750,63 +2132,70 @@ export default function App() {
                 Your room is always visible around this screen. Buy and equip items here to update it instantly.
               </p>
 
+              <p className="text-sm text-slate-500 mb-4">
+                Use Customize Room to enter room-only edit mode and drag your equipped items.
+              </p>
+
               {roomError && <p className="text-sm text-rose-600 font-medium mb-3">{roomError}</p>}
 
               <h3 className="font-bold text-lg mb-3">Room Shop</h3>
-              {roomState?.items?.length ? (
-                <div className="space-y-2">
-                  {roomState.items
-                    .slice()
-                    .sort((a, b) => a.min_xp - b.min_xp || a.cost_coins - b.cost_coins)
-                    .map((item) => {
-                      const notEnoughCoins = !item.owned && (roomState.coins ?? 0) < item.cost_coins;
-                      const disabled = roomBusyKey === item.key || !item.unlocked || notEnoughCoins;
-                      let buttonLabel = `Buy ${item.cost_coins} Coins`;
-                      let nextAction: "purchase" | "equip" | "unequip" = "purchase";
+              <div className={showRoomShell ? "room-shop-scroll flex-1 min-h-0 pr-1" : ""}>
+                {roomState?.items?.length ? (
+                  <div className="space-y-2">
+                    {roomState.items
+                      .slice()
+                      .sort((a, b) => a.min_xp - b.min_xp || a.cost_coins - b.cost_coins)
+                      .map((item) => {
+                        const notEnoughCoins = !item.owned && (roomState.coins ?? 0) < item.cost_coins;
+                        const disabled =
+                          roomBusyKey === item.key || Boolean(roomLayoutSavingKey) || !item.unlocked || notEnoughCoins;
+                        let buttonLabel = `Buy ${item.cost_coins} Coins`;
+                        let nextAction: "purchase" | "equip" | "unequip" = "purchase";
 
-                      if (!item.unlocked) {
-                        buttonLabel = `Unlock at ${item.min_xp} XP`;
-                      } else if (notEnoughCoins) {
-                        buttonLabel = `Need ${item.cost_coins} Coins`;
-                      } else if (item.owned && item.equipped) {
-                        buttonLabel = "Unequip";
-                        nextAction = "unequip";
-                      } else if (item.owned) {
-                        buttonLabel = "Equip";
-                        nextAction = "equip";
-                      }
+                        if (!item.unlocked) {
+                          buttonLabel = `Unlock at ${item.min_xp} XP`;
+                        } else if (notEnoughCoins) {
+                          buttonLabel = `Need ${item.cost_coins} Coins`;
+                        } else if (item.owned && item.equipped) {
+                          buttonLabel = "Unequip";
+                          nextAction = "unequip";
+                        } else if (item.owned) {
+                          buttonLabel = "Equip";
+                          nextAction = "equip";
+                        }
 
-                      return (
-                        <div
-                          key={item.key}
-                          className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
-                        >
-                          <div>
-                            <p className="font-bold text-slate-900">{item.name}</p>
-                            <p className="text-sm text-slate-600">{item.description}</p>
-                            <p className="text-xs font-semibold text-slate-500 mt-1">
-                              Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
-                            </p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => handleRoomAction(nextAction, item.key)}
-                            disabled={disabled}
-                            className={`px-3 py-2 rounded-xl border-2 text-sm font-bold ${
-                              item.owned && item.equipped
-                                ? "border-emerald-300 bg-emerald-100 text-emerald-700"
-                                : "border-slate-300 bg-white text-slate-700"
-                            } disabled:opacity-50`}
+                        return (
+                          <div
+                            key={item.key}
+                            className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
                           >
-                            {roomBusyKey === item.key ? "Saving..." : buttonLabel}
-                          </button>
-                        </div>
-                      );
-                    })}
-                </div>
-              ) : (
-                <p className="text-slate-500">No room items found.</p>
-              )}
+                            <div>
+                              <p className="font-bold text-slate-900">{item.name}</p>
+                              <p className="text-sm text-slate-600">{item.description}</p>
+                              <p className="text-xs font-semibold text-slate-500 mt-1">
+                                Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRoomAction(nextAction, item.key)}
+                              disabled={disabled}
+                              className={`px-3 py-2 rounded-xl border-2 text-sm font-bold ${
+                                item.owned && item.equipped
+                                  ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+                                  : "border-slate-300 bg-white text-slate-700"
+                              } disabled:opacity-50`}
+                            >
+                              {roomBusyKey === item.key ? "Saving..." : buttonLabel}
+                            </button>
+                          </div>
+                        );
+                      })}
+                  </div>
+                ) : (
+                  <p className="text-slate-500">No room items found.</p>
+                )}
+              </div>
             </div>
           </motion.div>
         )}
@@ -2125,7 +2514,7 @@ export default function App() {
       )}
 
       {/* Footer Stats */}
-      {(view === "bookshelf" || view === "dashboard" || view === "room") && stats && (
+      {showFooterStats && (
         <footer className={`${showRoomShell ? "mt-3" : "mt-12"} grid grid-cols-3 gap-4`}>
           <div className="text-center">
             <div className="bg-white p-3 rounded-2xl border-2 border-slate-900 mb-2 flex items-center justify-center">
@@ -2149,6 +2538,8 @@ export default function App() {
             <p className="font-bold">{stats.total_hours}</p>
           </div>
         </footer>
+      )}
+      </>
       )}
       </div>
     </div>

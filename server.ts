@@ -71,6 +71,9 @@ db.exec(`
     student_id INTEGER,
     item_key TEXT NOT NULL,
     is_equipped INTEGER DEFAULT 0,
+    pos_x REAL,
+    pos_y REAL,
+    z_index INTEGER,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(student_id, item_key),
     FOREIGN KEY(student_id) REFERENCES students(id)
@@ -109,6 +112,9 @@ ensureColumn("session_reflections", "created_at", "DATETIME DEFAULT CURRENT_TIME
 ensureColumn("student_room_items", "student_id", "INTEGER");
 ensureColumn("student_room_items", "item_key", "TEXT");
 ensureColumn("student_room_items", "is_equipped", "INTEGER DEFAULT 0");
+ensureColumn("student_room_items", "pos_x", "REAL");
+ensureColumn("student_room_items", "pos_y", "REAL");
+ensureColumn("student_room_items", "z_index", "INTEGER");
 ensureColumn("student_room_items", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 
 db.exec(`
@@ -126,6 +132,10 @@ const XP_PER_LEVEL = 500;
 const XP_MILESTONE_STEP = 500;
 const COIN_DIVISOR = 10;
 const MILESTONE_BONUS_COINS = 75;
+const ROOM_POSITION_MIN = 2;
+const ROOM_POSITION_MAX = 98;
+const ROOM_Z_INDEX_MIN = 1;
+const ROOM_Z_INDEX_MAX = 999;
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
 const ADMIN_ACCESS_CODE = (process.env.ADMIN_ACCESS_CODE || process.env.ADMIN_KEY || "Umphress1997!").trim();
@@ -141,68 +151,276 @@ type RoomItemDefinition = {
 
 const ROOM_ITEM_CATALOG: RoomItemDefinition[] = [
   {
-    key: "cozy_rug",
-    name: "Cozy Rug",
-    description: "A warm rug to make the room feel homey.",
-    category: "floor",
-    cost_coins: 25,
+    key: "small_plant",
+    name: "Small Plant",
+    description: "A tiny green plant for your desk corner.",
+    category: "small_plant",
+    cost_coins: 20,
     min_xp: 0,
   },
   {
-    key: "wall_poster",
-    name: "Story Poster",
-    description: "A bright poster for your reading wall.",
-    category: "wall",
+    key: "cactus",
+    name: "Cactus Buddy",
+    description: "A fun cactus prop for your reading room.",
+    category: "cactus",
+    cost_coins: 35,
+    min_xp: 50,
+  },
+  {
+    key: "small_blue_picture",
+    name: "Blue Picture",
+    description: "A framed blue scene for your wall.",
+    category: "small_blue_picture",
     cost_coins: 45,
-    min_xp: 120,
+    min_xp: 100,
   },
   {
-    key: "desk_plant",
-    name: "Desk Plant",
-    description: "A small green plant near the computer.",
-    category: "desk",
-    cost_coins: 60,
-    min_xp: 220,
+    key: "small_yellow_picture",
+    name: "Yellow Picture",
+    description: "A warm framed picture to brighten the room.",
+    category: "small_yellow_picture",
+    cost_coins: 45,
+    min_xp: 140,
   },
   {
-    key: "window_curtains",
-    name: "Curtains",
-    description: "Soft curtains for the bedroom window.",
-    category: "window",
-    cost_coins: 85,
-    min_xp: 320,
+    key: "wall_clock",
+    name: "Wall Clock",
+    description: "Keep track of quest time with a cozy wall clock.",
+    category: "wall_clock",
+    cost_coins: 55,
+    min_xp: 180,
   },
   {
-    key: "bed_blanket",
-    name: "Comfy Blanket",
-    description: "A colorful blanket upgrade for your bed.",
-    category: "bed",
-    cost_coins: 95,
-    min_xp: 420,
+    key: "blue_chair",
+    name: "Blue Chair",
+    description: "A comfy reading chair for quick breaks.",
+    category: "blue_chair",
+    cost_coins: 70,
+    min_xp: 240,
+  },
+  {
+    key: "side_table",
+    name: "Side Table",
+    description: "A simple side table for room style.",
+    category: "side_table",
+    cost_coins: 80,
+    min_xp: 300,
+  },
+  {
+    key: "small_table",
+    name: "Small Table",
+    description: "A small round table for room decor.",
+    category: "small_table",
+    cost_coins: 90,
+    min_xp: 360,
+  },
+  {
+    key: "small_blue_sidetable",
+    name: "Blue Side Cabinet",
+    description: "A compact cabinet with extra personality.",
+    category: "small_blue_sidetable",
+    cost_coins: 100,
+    min_xp: 430,
   },
   {
     key: "desk_lamp",
     name: "Desk Lamp",
     description: "A reading lamp for late-night quests.",
-    category: "desk",
+    category: "desk_lamp",
     cost_coins: 120,
     min_xp: 520,
   },
   {
-    key: "string_lights",
-    name: "String Lights",
-    description: "Twinkle lights around the room.",
-    category: "wall",
-    cost_coins: 150,
-    min_xp: 700,
+    key: "hanging_lamp",
+    name: "Hanging Lamp",
+    description: "A ceiling lamp that adds cozy vibes.",
+    category: "hanging_lamp",
+    cost_coins: 140,
+    min_xp: 620,
   },
   {
-    key: "book_trophy",
-    name: "Book Trophy",
-    description: "A trophy that celebrates your reading wins.",
-    category: "shelf",
+    key: "medium_potted_plant",
+    name: "Potted Plant",
+    description: "A medium plant to make your room feel alive.",
+    category: "medium_potted_plant",
+    cost_coins: 150,
+    min_xp: 720,
+  },
+  {
+    key: "potion_rack",
+    name: "Potion Rack",
+    description: "A magical shelf full of colorful potions.",
+    category: "potion_rack",
+    cost_coins: 170,
+    min_xp: 820,
+  },
+  {
+    key: "wizard_globe",
+    name: "Wizard Globe",
+    description: "A glowing globe for your wizard corner.",
+    category: "wizard_globe",
+    cost_coins: 190,
+    min_xp: 920,
+  },
+  {
+    key: "baby_dragon",
+    name: "Baby Dragon",
+    description: "A tiny dragon companion for your wall.",
+    category: "baby_dragon",
     cost_coins: 220,
-    min_xp: 900,
+    min_xp: 1040,
+  },
+  {
+    key: "green_couch",
+    name: "Green Couch",
+    description: "A comfy couch for long reading quests.",
+    category: "green_couch",
+    cost_coins: 250,
+    min_xp: 1180,
+  },
+  {
+    key: "tree_hammock",
+    name: "Tree Hammock",
+    description: "A dreamy hammock setup for peak relaxation.",
+    category: "tree_hammock",
+    cost_coins: 280,
+    min_xp: 1320,
+  },
+  {
+    key: "alarm_clock",
+    name: "Alarm Clock",
+    description: "A bright alarm clock for your room.",
+    category: "alarm_clock",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "bean_bag",
+    name: "Bean Bag",
+    description: "A cozy bean bag for reading breaks.",
+    category: "bean_bag",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "blue_bed",
+    name: "Blue Bed",
+    description: "A cool blue bed setup.",
+    category: "blue_bed",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "bookshelf_1",
+    name: "Bookshelf One",
+    description: "A classic bookshelf packed with stories.",
+    category: "bookshelf_1",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "bookshelf_2",
+    name: "Bookshelf Two",
+    description: "Another bookshelf to expand your library.",
+    category: "bookshelf_2",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "circle_mirror",
+    name: "Circle Mirror",
+    description: "A round mirror for your wall.",
+    category: "circle_mirror",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "colorful_end_table",
+    name: "Colorful End Table",
+    description: "A bright side table with color pop.",
+    category: "colorful_end_table",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "desk",
+    name: "Desk",
+    description: "A sturdy desk for study and quests.",
+    category: "desk",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "hamper",
+    name: "Hamper",
+    description: "A room hamper to keep things tidy.",
+    category: "hamper",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "floor_lamp",
+    name: "Floor Lamp",
+    description: "A standing lamp for warm lighting.",
+    category: "floor_lamp",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "multi_pictures",
+    name: "Picture Set",
+    description: "A set of framed wall pictures.",
+    category: "multi_pictures",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "pink_bed",
+    name: "Pink Bed",
+    description: "A comfy pink bed setup.",
+    category: "pink_bed",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "radio",
+    name: "Radio",
+    description: "A retro radio for background music vibes.",
+    category: "radio",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "rectangle_windows",
+    name: "Rectangle Windows",
+    description: "Wide window set for more sunlight.",
+    category: "rectangle_windows",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "rounded_window",
+    name: "Rounded Window",
+    description: "A rounded window for cozy style.",
+    category: "rounded_window",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "slippers",
+    name: "Slippers",
+    description: "Soft slippers for a comfy room touch.",
+    category: "slippers",
+    cost_coins: 0,
+    min_xp: 0,
+  },
+  {
+    key: "small_plant_2",
+    name: "Small Plant Two",
+    description: "Another leafy plant for extra greenery.",
+    category: "small_plant_2",
+    cost_coins: 0,
+    min_xp: 0,
   },
 ];
 
@@ -229,6 +447,18 @@ const getStringValue = (value: unknown) => {
   if (typeof value === "string") return value;
   if (Array.isArray(value) && typeof value[0] === "string") return value[0];
   return "";
+};
+
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const parseRoomPosition = (value: unknown) => {
+  const parsed = Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(parsed)) return null;
+  return clamp(parsed, ROOM_POSITION_MIN, ROOM_POSITION_MAX);
+};
+const parseRoomZIndex = (value: unknown) => {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (!Number.isFinite(parsed)) return null;
+  return clamp(parsed, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX);
 };
 
 const normalizeClassCode = (value: unknown) => getStringValue(value).trim().toUpperCase();
@@ -311,23 +541,49 @@ const buildRoomState = (studentId: number) => {
   const nextMilestoneXp = (Math.floor(totalXp / XP_MILESTONE_STEP) + 1) * XP_MILESTONE_STEP;
 
   const ownedRows = db
-    .prepare("SELECT item_key, is_equipped FROM student_room_items WHERE student_id = ?")
-    .all(studentId) as Array<{ item_key: string; is_equipped: number }>;
-  const ownedMap = new Map<string, boolean>();
+    .prepare("SELECT item_key, is_equipped, pos_x, pos_y, z_index FROM student_room_items WHERE student_id = ?")
+    .all(studentId) as Array<{
+    item_key: string;
+    is_equipped: number;
+    pos_x: number | null;
+    pos_y: number | null;
+    z_index: number | null;
+  }>;
+  const ownedMap = new Map<
+    string,
+    {
+      equipped: boolean;
+      pos_x: number | null;
+      pos_y: number | null;
+      z_index: number | null;
+    }
+  >();
   for (const row of ownedRows) {
     if (typeof row.item_key === "string") {
-      ownedMap.set(row.item_key, Boolean(row.is_equipped));
+      const parsedZIndex = row.z_index == null ? null : Number.parseInt(String(row.z_index), 10);
+      const parsedPosX = row.pos_x == null ? null : Number(row.pos_x);
+      const parsedPosY = row.pos_y == null ? null : Number(row.pos_y);
+      ownedMap.set(row.item_key, {
+        equipped: Boolean(row.is_equipped),
+        pos_x: Number.isFinite(parsedPosX) ? clamp(parsedPosX, ROOM_POSITION_MIN, ROOM_POSITION_MAX) : null,
+        pos_y: Number.isFinite(parsedPosY) ? clamp(parsedPosY, ROOM_POSITION_MIN, ROOM_POSITION_MAX) : null,
+        z_index: Number.isFinite(parsedZIndex) ? clamp(parsedZIndex, ROOM_Z_INDEX_MIN, ROOM_Z_INDEX_MAX) : null,
+      });
     }
   }
 
   const items = ROOM_ITEM_CATALOG.map((item) => {
-    const owned = ownedMap.has(item.key);
-    const equipped = ownedMap.get(item.key) ?? false;
+    const ownedState = ownedMap.get(item.key);
+    const owned = Boolean(ownedState);
+    const equipped = ownedState?.equipped ?? false;
     return {
       ...item,
       owned,
       equipped,
       unlocked: totalXp >= item.min_xp,
+      pos_x: ownedState?.pos_x ?? null,
+      pos_y: ownedState?.pos_y ?? null,
+      z_index: ownedState?.z_index ?? null,
     };
   });
 
@@ -650,6 +906,13 @@ async function startServer() {
     if (!student) return;
 
     const action = getStringValue(req.body?.action).trim().toLowerCase();
+    if (action === "reset_layout_all") {
+      db.prepare("UPDATE student_room_items SET pos_x = NULL, pos_y = NULL, z_index = NULL WHERE student_id = ?").run(
+        student.studentId
+      );
+      return res.json(buildRoomState(student.studentId));
+    }
+
     const itemKey = getStringValue(req.body?.item_key).trim();
     const item = roomCatalogByKey.get(itemKey);
     if (!item) {
@@ -696,6 +959,27 @@ async function startServer() {
       );
     } else if (action === "unequip") {
       db.prepare("UPDATE student_room_items SET is_equipped = 0 WHERE student_id = ? AND item_key = ?").run(
+        student.studentId,
+        item.key
+      );
+    } else if (action === "update_layout") {
+      if (!alreadyOwned) {
+        return res.status(400).json({ error: "Purchase this item first" });
+      }
+      const posX = parseRoomPosition(req.body?.pos_x);
+      const posY = parseRoomPosition(req.body?.pos_y);
+      const zIndex = parseRoomZIndex(req.body?.z_index);
+      if (posX == null || posY == null || zIndex == null) {
+        return res.status(400).json({ error: "Invalid layout values" });
+      }
+      db.prepare(
+        "UPDATE student_room_items SET pos_x = ?, pos_y = ?, z_index = ? WHERE student_id = ? AND item_key = ?"
+      ).run(posX, posY, zIndex, student.studentId, item.key);
+    } else if (action === "reset_layout") {
+      if (!alreadyOwned) {
+        return res.status(400).json({ error: "Purchase this item first" });
+      }
+      db.prepare("UPDATE student_room_items SET pos_x = NULL, pos_y = NULL, z_index = NULL WHERE student_id = ? AND item_key = ?").run(
         student.studentId,
         item.key
       );

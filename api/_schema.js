@@ -96,6 +96,9 @@ export const ensureSchema = async () => {
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS student_id INTEGER`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS item_key TEXT`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS is_equipped BOOLEAN DEFAULT false`);
+    await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS pos_x REAL`);
+    await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS pos_y REAL`);
+    await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS z_index INTEGER`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
 
     await query(`

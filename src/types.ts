@@ -105,6 +105,9 @@ export interface RoomItemState {
   owned: boolean;
   equipped: boolean;
   unlocked: boolean;
+  pos_x: number | null;
+  pos_y: number | null;
+  z_index: number | null;
 }
 
 export interface RoomStateResponse {
