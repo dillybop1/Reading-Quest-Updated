@@ -35,6 +35,43 @@ const loadStarterTemplate = async () => {
   return templateResult.rows.map(normalizeTemplateRow);
 };
 
+const replaceStarterTemplate = async (
+  normalizedTemplate: Array<{ key: string; pos_x: number; pos_y: number; z_index: number }>
+) => {
+  await query("BEGIN");
+  try {
+    await query("DELETE FROM room_starter_template_items");
+
+    if (normalizedTemplate.length > 0) {
+      const values: Array<string | number> = [];
+      const placeholders = normalizedTemplate
+        .map((item, index) => {
+          const base = index * 5;
+          values.push(item.key, item.pos_x, item.pos_y, item.z_index, index);
+          return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5})`;
+        })
+        .join(", ");
+
+      await query(
+        `
+          INSERT INTO room_starter_template_items (item_key, pos_x, pos_y, z_index, sort_order)
+          VALUES ${placeholders}
+        `,
+        values
+      );
+    }
+
+    await query("COMMIT");
+  } catch (err) {
+    try {
+      await query("ROLLBACK");
+    } catch {
+      // Ignore rollback failures and surface the original error.
+    }
+    throw err;
+  }
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     const auth = requireAdmin(req);
@@ -88,19 +125,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const normalizedTemplate = equippedItemsResult.rows.map(normalizeTemplateRow);
 
-    await query("DELETE FROM room_starter_template_items");
-
-    await Promise.all(
-      normalizedTemplate.map((item, index) =>
-        query(
-          `
-            INSERT INTO room_starter_template_items (item_key, pos_x, pos_y, z_index, sort_order)
-            VALUES ($1, $2, $3, $4, $5)
-          `,
-          [item.key, item.pos_x, item.pos_y, item.z_index, index]
-        )
-      )
-    );
+    await replaceStarterTemplate(normalizedTemplate);
 
     return res.status(200).json({
       ok: true,
@@ -116,4 +141,3 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(500).json({ error: String(err?.message ?? err) });
   }
 }
-

@@ -1549,7 +1549,7 @@ export default function App() {
   const mainAreaClassName = showRoomShell ? "flex-1 min-h-0" : "";
   const showFooterStats = Boolean(
     stats &&
-      (view === "bookshelf" && !showAddBookForm) &&
+      view === "bookshelf" &&
       showAppChrome
   );
   const roomOwnedCount = roomState?.items.filter((item) => item.owned).length ?? 0;
