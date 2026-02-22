@@ -85,6 +85,10 @@ db.exec(`
     student_id INTEGER,
     book_id INTEGER,
     completion_number INTEGER NOT NULL,
+    sticker_key TEXT,
+    rating_key TEXT,
+    sticker_pos_x REAL,
+    sticker_pos_y REAL,
     completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(student_id, book_id),
     UNIQUE(student_id, completion_number),
@@ -146,6 +150,10 @@ ensureColumn("achievement_unlocks", "unlocked_at", "DATETIME DEFAULT CURRENT_TIM
 ensureColumn("student_book_completions", "student_id", "INTEGER");
 ensureColumn("student_book_completions", "book_id", "INTEGER");
 ensureColumn("student_book_completions", "completion_number", "INTEGER");
+ensureColumn("student_book_completions", "sticker_key", "TEXT");
+ensureColumn("student_book_completions", "rating_key", "TEXT");
+ensureColumn("student_book_completions", "sticker_pos_x", "REAL");
+ensureColumn("student_book_completions", "sticker_pos_y", "REAL");
 ensureColumn("student_book_completions", "completed_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 ensureColumn("student_room_items", "student_id", "INTEGER");
 ensureColumn("student_room_items", "item_key", "TEXT");
@@ -187,6 +195,17 @@ const ROOM_Z_INDEX_MAX = 999;
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
 const ADMIN_ACCESS_CODE = (process.env.ADMIN_ACCESS_CODE || process.env.ADMIN_KEY || "Umphress1997!").trim();
+const BOOK_COMPLETION_STICKER_KEYS = new Set([
+  "dragon",
+  "rocket",
+  "crown",
+  "owl",
+  "lightning",
+  "mountain",
+  "bookworm",
+  "shield",
+]);
+const BOOK_COMPLETION_RATING_KEYS = new Set(["loved_it", "good_read", "hard_for_me"]);
 
 type RoomItemDefinition = {
   key: string;
@@ -1518,7 +1537,7 @@ async function startServer() {
       .prepare("SELECT COALESCE(SUM(duration_minutes), 0) as total FROM sessions WHERE student_id = ?")
       .get(student.studentId) as { total: number };
     const totalBooks = db
-      .prepare("SELECT COUNT(*) as count FROM books WHERE student_id = ?")
+      .prepare("SELECT COUNT(*) as count FROM student_book_completions WHERE student_id = ?")
       .get(student.studentId) as { count: number };
 
     res.json({
@@ -1542,8 +1561,109 @@ async function startServer() {
     const student = resolveStudent(req, res);
     if (!student) return;
 
-    const books = db.prepare("SELECT * FROM books WHERE student_id = ? ORDER BY id DESC").all(student.studentId);
+    const books = db
+      .prepare(
+        `
+          SELECT *
+          FROM books
+          WHERE student_id = ?
+            AND (COALESCE(total_pages, 0) <= 0 OR COALESCE(current_page, 0) < COALESCE(total_pages, 0))
+          ORDER BY id DESC
+        `
+      )
+      .all(student.studentId);
     res.json(books);
+  });
+
+  app.get("/api/books/completed", (req, res) => {
+    const student = resolveStudent(req, res);
+    if (!student) return;
+
+    const completedBooks = db
+      .prepare(
+        `
+          SELECT
+            b.id as book_id,
+            b.title,
+            b.author,
+            COALESCE(b.total_pages, 0) as total_pages,
+            sbc.completion_number,
+            sbc.sticker_key,
+            sbc.rating_key,
+            sbc.sticker_pos_x,
+            sbc.sticker_pos_y,
+            sbc.completed_at
+          FROM student_book_completions sbc
+          JOIN books b ON b.id = sbc.book_id
+          WHERE sbc.student_id = ?
+          ORDER BY sbc.completion_number DESC, sbc.completed_at DESC
+        `
+      )
+      .all(student.studentId);
+
+    return res.json(completedBooks);
+  });
+
+  app.patch("/api/books/completed", (req, res) => {
+    const student = resolveStudent(req, res);
+    if (!student) return;
+
+    const completionNumber = toPositiveInt(req.body?.completion_number);
+    if (!completionNumber) {
+      return res.status(400).json({ error: "Invalid completion_number" });
+    }
+
+    const stickerKeyRaw = getStringValue(req.body?.sticker_key).trim();
+    const ratingKeyRaw = getStringValue(req.body?.rating_key).trim();
+    const stickerPosXRaw = req.body?.sticker_pos_x;
+    const stickerPosYRaw = req.body?.sticker_pos_y;
+    const stickerKey = stickerKeyRaw || null;
+    const ratingKey = ratingKeyRaw || null;
+    const stickerPosX = stickerPosXRaw == null ? null : Number(stickerPosXRaw);
+    const stickerPosY = stickerPosYRaw == null ? null : Number(stickerPosYRaw);
+
+    if (stickerKey && !BOOK_COMPLETION_STICKER_KEYS.has(stickerKey)) {
+      return res.status(400).json({ error: "Invalid sticker_key" });
+    }
+
+    if (ratingKey && !BOOK_COMPLETION_RATING_KEYS.has(ratingKey)) {
+      return res.status(400).json({ error: "Invalid rating_key" });
+    }
+
+    if (stickerPosX != null && (!Number.isFinite(stickerPosX) || stickerPosX < 0 || stickerPosX > 100)) {
+      return res.status(400).json({ error: "Invalid sticker_pos_x" });
+    }
+
+    if (stickerPosY != null && (!Number.isFinite(stickerPosY) || stickerPosY < 0 || stickerPosY > 100)) {
+      return res.status(400).json({ error: "Invalid sticker_pos_y" });
+    }
+
+    const updateResult = db
+      .prepare(
+        `
+          UPDATE student_book_completions
+          SET sticker_key = ?, rating_key = ?, sticker_pos_x = ?, sticker_pos_y = ?
+          WHERE student_id = ? AND completion_number = ?
+        `
+      )
+      .run(stickerKey, ratingKey, stickerPosX, stickerPosY, student.studentId, completionNumber);
+
+    if (!updateResult.changes) {
+      return res.status(404).json({ error: "Completion record not found" });
+    }
+
+    const updated = db
+      .prepare(
+        `
+          SELECT completion_number, sticker_key, rating_key, sticker_pos_x, sticker_pos_y
+          FROM student_book_completions
+          WHERE student_id = ? AND completion_number = ?
+          LIMIT 1
+        `
+      )
+      .get(student.studentId, completionNumber);
+
+    return res.json(updated);
   });
 
   app.get("/api/books/active", (req, res) => {
@@ -1617,8 +1737,10 @@ async function startServer() {
     const overtimeBonusCoins = overtimeMinutes * 3;
 
     const bookRow = db
-      .prepare("SELECT id, current_page, total_pages FROM books WHERE id = ? AND student_id = ? LIMIT 1")
-      .get(payload.book_id, studentId) as { id?: number; current_page?: number; total_pages?: number } | undefined;
+      .prepare("SELECT id, title, current_page, total_pages FROM books WHERE id = ? AND student_id = ? LIMIT 1")
+      .get(payload.book_id, studentId) as
+      | { id?: number; title?: string; current_page?: number; total_pages?: number }
+      | undefined;
     if (!bookRow?.id) {
       throw new Error("BOOK_NOT_FOUND");
     }
@@ -1658,10 +1780,34 @@ async function startServer() {
       studentId
     );
 
+    let bookCompletion:
+      | {
+          book_id: number;
+          title: string;
+          total_pages: number;
+          completion_number: number;
+          completed_at: string;
+          sticker_key: null;
+          rating_key: null;
+          sticker_pos_x: null;
+          sticker_pos_y: null;
+        }
+      | null = null;
     const unlockedAchievements: AchievementUnlock[] = [];
     if (crossedFinish) {
       const completion = tryRecordBookCompletion(studentId, payload.book_id);
       if (completion?.completion_number) {
+        bookCompletion = {
+          book_id: Number(payload.book_id),
+          title: String(bookRow.title ?? "Completed Book"),
+          total_pages: totalBookPages,
+          completion_number: Number(completion.completion_number),
+          completed_at: String(completion.completed_at),
+          sticker_key: null,
+          rating_key: null,
+          sticker_pos_x: null,
+          sticker_pos_y: null,
+        };
         const bookUnlock = awardBookCompletionAchievement(studentId, completion.completion_number);
         if (bookUnlock) {
           unlockedAchievements.push(bookUnlock);
@@ -1717,6 +1863,7 @@ async function startServer() {
       achievementBonusXp,
       achievementBonusCoins,
       achievementsUnlocked: unlockedAchievements,
+      bookCompletion,
     };
   });
 
@@ -1779,6 +1926,7 @@ async function startServer() {
       achievement_bonus_xp: sessionResult.achievementBonusXp,
       achievement_bonus_coins: sessionResult.achievementBonusCoins,
       achievements_unlocked: sessionResult.achievementsUnlocked,
+      book_completion: sessionResult.bookCompletion,
     });
   });
 
@@ -2090,6 +2238,92 @@ async function startServer() {
       granted_coins: coins,
       coins,
       total_coins_earned: coins,
+    });
+  });
+
+  app.post("/api/admin/room-test", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+
+    const studentId = toPositiveInt(req.body?.student_id);
+    const itemKey = getStringValue(req.body?.item_key).trim();
+    const itemKeys =
+      Array.isArray(req.body?.item_keys)
+        ? Array.from(
+            new Set(
+              req.body.item_keys
+                .map((entry: unknown) => (typeof entry === "string" ? entry.trim() : ""))
+                .filter((entry: string) => entry.length > 0)
+            )
+          )
+        : [];
+    const keysToGrant = itemKeys.length > 0 ? itemKeys : itemKey ? [itemKey] : [];
+    const equip = req.body?.equip === undefined ? true : Boolean(req.body?.equip);
+    const posXRaw = req.body?.pos_x;
+    const posYRaw = req.body?.pos_y;
+    const zIndexRaw = req.body?.z_index;
+    const hasPosX = !(posXRaw == null || posXRaw === "");
+    const hasPosY = !(posYRaw == null || posYRaw === "");
+    const hasZIndex = !(zIndexRaw == null || zIndexRaw === "");
+    const posX = hasPosX ? parseRoomPosition(posXRaw) : null;
+    const posY = hasPosY ? parseRoomPosition(posYRaw) : null;
+    const zIndex = hasZIndex ? parseRoomZIndex(zIndexRaw) : null;
+
+    if (!studentId) {
+      return res.status(400).json({ error: "Invalid student_id" });
+    }
+
+    if (keysToGrant.length === 0) {
+      return res.status(400).json({ error: "Invalid item_key/item_keys" });
+    }
+
+    if ((hasPosX && posX == null) || (hasPosY && posY == null) || (hasZIndex && zIndex == null)) {
+      return res.status(400).json({ error: "Invalid layout values" });
+    }
+
+    const studentExists = db.prepare("SELECT id FROM students WHERE id = ? LIMIT 1").get(studentId);
+    if (!studentExists) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const upsertRoomItem = db.prepare(
+      `
+        INSERT INTO student_room_items (student_id, item_key, is_equipped, pos_x, pos_y, z_index)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(student_id, item_key)
+        DO UPDATE SET
+          is_equipped = CASE WHEN excluded.is_equipped = 1 THEN 1 ELSE student_room_items.is_equipped END,
+          pos_x = COALESCE(excluded.pos_x, student_room_items.pos_x),
+          pos_y = COALESCE(excluded.pos_y, student_room_items.pos_y),
+          z_index = COALESCE(excluded.z_index, student_room_items.z_index)
+      `
+    );
+    const grantItems = db.transaction((itemKeyList: string[]) => {
+      for (const key of itemKeyList) {
+        upsertRoomItem.run(studentId, key, equip ? 1 : 0, posX, posY, zIndex);
+      }
+    });
+    grantItems(keysToGrant);
+
+    const counts = db
+      .prepare(
+        `
+          SELECT
+            COUNT(*) as owned_count,
+            SUM(CASE WHEN is_equipped = 1 THEN 1 ELSE 0 END) as equipped_count
+          FROM student_room_items
+          WHERE student_id = ?
+        `
+      )
+      .get(studentId) as { owned_count?: number; equipped_count?: number } | undefined;
+
+    return res.json({
+      student_id: studentId,
+      item_key: keysToGrant[0] ?? null,
+      granted_count: keysToGrant.length,
+      granted_keys: keysToGrant,
+      equipped: equip,
+      owned_count: Number(counts?.owned_count ?? 0),
+      equipped_count: Number(counts?.equipped_count ?? 0),
     });
   });
 

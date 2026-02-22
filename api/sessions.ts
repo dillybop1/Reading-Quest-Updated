@@ -188,7 +188,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
       const sessionPayload = await withTransaction(async (db) => {
         const bookResult = await db.query(
-          "SELECT id, current_page, total_pages FROM books WHERE id = $1 AND student_id = $2 LIMIT 1",
+          "SELECT id, title, current_page, total_pages FROM books WHERE id = $1 AND student_id = $2 LIMIT 1",
           [book_id, student.studentId]
         );
         if (!bookResult.rows.length) {
@@ -313,6 +313,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           achievement_bonus_xp: achievementBonusXp,
           achievement_bonus_coins: achievementBonusCoins,
           achievements_unlocked: unlockedAchievements,
+          book_completion: completion
+            ? {
+                book_id: toSafeInt(book_id),
+                title: String(bookRow.title ?? "Completed Book"),
+                total_pages: totalBookPages,
+                completion_number: completion.completion_number,
+                completed_at: completion.completed_at,
+                sticker_key: null,
+                rating_key: null,
+                sticker_pos_x: null,
+                sticker_pos_y: null,
+              }
+            : null,
         };
       });
 

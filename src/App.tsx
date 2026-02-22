@@ -19,6 +19,7 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import {
   Book,
+  CompletedBook,
   UserStats,
   ReadingSession,
   StudentIdentity,
@@ -27,6 +28,7 @@ import {
   AdminReflectionsResponse,
   RoomItemState,
   RoomStateResponse,
+  SessionBookCompletion,
   SessionRewardSummary,
   AchievementsResponse,
 } from "./types";
@@ -44,6 +46,26 @@ const ROOM_Z_INDEX_MIN = 1;
 const ROOM_Z_INDEX_MAX = 999;
 const OVERTIME_XP_PER_MINUTE = 2;
 const OVERTIME_COINS_PER_MINUTE = 3;
+const HALL_MILESTONES = [5, 10, 20, 30];
+const DEFAULT_HALL_STICKER_POSITION = { x: 86, y: 18 };
+const ROOM_TEST_GRANT_ALL_DECOR_KEY = "__all_decor__";
+
+const BOOK_STICKER_OPTIONS = [
+  { key: "dragon", emoji: "🐉", label: "Dragon", chipClass: "bg-rose-100 text-rose-700 border-rose-200" },
+  { key: "rocket", emoji: "🚀", label: "Rocket", chipClass: "bg-sky-100 text-sky-700 border-sky-200" },
+  { key: "crown", emoji: "👑", label: "Crown", chipClass: "bg-amber-100 text-amber-700 border-amber-200" },
+  { key: "owl", emoji: "🦉", label: "Owl", chipClass: "bg-violet-100 text-violet-700 border-violet-200" },
+  { key: "lightning", emoji: "⚡", label: "Lightning", chipClass: "bg-yellow-100 text-yellow-700 border-yellow-200" },
+  { key: "mountain", emoji: "🏔️", label: "Mountain", chipClass: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  { key: "bookworm", emoji: "📚", label: "Bookworm", chipClass: "bg-teal-100 text-teal-700 border-teal-200" },
+  { key: "shield", emoji: "🛡️", label: "Shield", chipClass: "bg-indigo-100 text-indigo-700 border-indigo-200" },
+] as const;
+
+const BOOK_RATING_OPTIONS = [
+  { key: "loved_it", emoji: "😄", label: "Loved It", chipClass: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  { key: "good_read", emoji: "🙂", label: "Good Read", chipClass: "bg-sky-100 text-sky-700 border-sky-200" },
+  { key: "hard_for_me", emoji: "😅", label: "Hard For Me", chipClass: "bg-amber-100 text-amber-700 border-amber-200" },
+] as const;
 
 type RoomSpriteConfig = {
   className: string;
@@ -200,6 +222,63 @@ const getRoomSpriteLayout = (item: Pick<RoomItemState, "key" | "pos_x" | "pos_y"
 const getRoomShopCategory = (itemKey: string): RoomShopCategoryId =>
   ROOM_SHOP_CATEGORY_BY_ITEM_KEY[itemKey] ?? "misc";
 
+const formatRoomItemLabel = (itemKey: string) =>
+  itemKey
+    .split("_")
+    .map((chunk) => (chunk.length ? `${chunk[0].toUpperCase()}${chunk.slice(1)}` : chunk))
+    .join(" ");
+
+const getBookSizeBadge = (totalPages: number) => {
+  if (totalPages >= 300) {
+    return { label: "Long Quest", className: "bg-rose-100 text-rose-700 border-rose-200" };
+  }
+  if (totalPages >= 150) {
+    return { label: "Medium Quest", className: "bg-amber-100 text-amber-700 border-amber-200" };
+  }
+  return { label: "Short Quest", className: "bg-emerald-100 text-emerald-700 border-emerald-200" };
+};
+
+const getHallFrameStyle = (completionNumber: number) => {
+  if (completionNumber >= 20) {
+    return {
+      wrapperClass:
+        "rounded-2xl p-[2px] bg-[linear-gradient(120deg,#f59e0b,#f43f5e,#0ea5e9,#22c55e)]",
+      innerClass: "rounded-[14px] border border-slate-200 bg-white",
+      stampClass: "bg-gradient-to-br from-fuchsia-500 to-cyan-500 text-white border-fuchsia-200",
+      frameLabel: "Legend Frame",
+    };
+  }
+  if (completionNumber >= 10) {
+    return {
+      wrapperClass: "rounded-2xl p-[2px] bg-[linear-gradient(120deg,#f59e0b,#fde68a)]",
+      innerClass: "rounded-[14px] border border-amber-200 bg-amber-50/40",
+      stampClass: "bg-gradient-to-br from-amber-500 to-yellow-400 text-white border-amber-200",
+      frameLabel: "Gold Frame",
+    };
+  }
+  if (completionNumber >= 5) {
+    return {
+      wrapperClass: "rounded-2xl p-[2px] bg-[linear-gradient(120deg,#94a3b8,#cbd5e1)]",
+      innerClass: "rounded-[14px] border border-slate-200 bg-slate-50/70",
+      stampClass: "bg-gradient-to-br from-slate-500 to-slate-400 text-white border-slate-200",
+      frameLabel: "Silver Frame",
+    };
+  }
+
+  return {
+    wrapperClass: "rounded-2xl p-[2px] bg-[linear-gradient(120deg,#f59e0b,#f97316)]",
+    innerClass: "rounded-[14px] border border-orange-200 bg-orange-50/70",
+    stampClass: "bg-gradient-to-br from-orange-500 to-amber-500 text-white border-orange-200",
+    frameLabel: "Bronze Frame",
+  };
+};
+
+const getStickerOption = (stickerKey: string | null | undefined) =>
+  BOOK_STICKER_OPTIONS.find((option) => option.key === stickerKey) ?? null;
+
+const getRatingOption = (ratingKey: string | null | undefined) =>
+  BOOK_RATING_OPTIONS.find((option) => option.key === ratingKey) ?? null;
+
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [books, setBooks] = useState<Book[]>([]);
@@ -215,7 +294,7 @@ export default function App() {
   const [adminError, setAdminError] = useState<string | null>(null);
   const [adminRoster, setAdminRoster] = useState<AdminRosterResponse | null>(null);
   const [isAdminLoading, setIsAdminLoading] = useState(false);
-  const [adminSection, setAdminSection] = useState<"roster" | "teacher" | "responses">("roster");
+  const [adminSection, setAdminSection] = useState<"roster" | "teacher" | "responses" | "roomTest">("roster");
   const [teacherClassCodeInput, setTeacherClassCodeInput] = useState("");
   const [teacherNicknamesInput, setTeacherNicknamesInput] = useState("");
   const [teacherSetupError, setTeacherSetupError] = useState<string | null>(null);
@@ -234,6 +313,12 @@ export default function App() {
   const [responsesSearchInput, setResponsesSearchInput] = useState("");
   const [responsesClassFilter, setResponsesClassFilter] = useState("all");
   const [responsesStudentFilter, setResponsesStudentFilter] = useState("all");
+  const [roomTestStudentId, setRoomTestStudentId] = useState("");
+  const [roomTestItemKey, setRoomTestItemKey] = useState<string>(Object.keys(ROOM_SPRITE_CONFIG)[0] ?? "small_plant");
+  const [roomTestEquipNow, setRoomTestEquipNow] = useState(true);
+  const [roomTestBusy, setRoomTestBusy] = useState(false);
+  const [roomTestError, setRoomTestError] = useState<string | null>(null);
+  const [roomTestMessage, setRoomTestMessage] = useState<string | null>(null);
   const [deleteBusyKey, setDeleteBusyKey] = useState<string | null>(null);
   const [adminTapCount, setAdminTapCount] = useState(0);
   const adminTapResetRef = useRef<NodeJS.Timeout | null>(null);
@@ -244,6 +329,7 @@ export default function App() {
     | "admin"
     | "setup"
     | "bookshelf"
+    | "hallOfReads"
     | "achievements"
     | "room"
     | "roomView"
@@ -252,6 +338,7 @@ export default function App() {
     | "reading"
     | "summary"
     | "questions"
+    | "bookCompletion"
     | "celebration"
   >("loading");
   
@@ -274,6 +361,23 @@ export default function App() {
   const [earnedXp, setEarnedXp] = useState(0);
   const [sessionRewardSummary, setSessionRewardSummary] = useState<SessionRewardSummary | null>(null);
   const [achievementsData, setAchievementsData] = useState<AchievementsResponse | null>(null);
+  const [completedBooks, setCompletedBooks] = useState<CompletedBook[]>([]);
+  const [pendingBookCompletion, setPendingBookCompletion] = useState<SessionBookCompletion | null>(null);
+  const [selectedCompletionSticker, setSelectedCompletionSticker] = useState<string | null>(null);
+  const [selectedCompletionRating, setSelectedCompletionRating] = useState<string | null>(null);
+  const [hallStickerDraftPositionByCompletion, setHallStickerDraftPositionByCompletion] = useState<
+    Record<number, { x: number; y: number }>
+  >({});
+  const [hallStickerDragState, setHallStickerDragState] = useState<{
+    completionNumber: number;
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startX: number;
+    startY: number;
+  } | null>(null);
+  const [completedBookSavingKey, setCompletedBookSavingKey] = useState<number | null>(null);
+  const [completionChoiceError, setCompletionChoiceError] = useState<string | null>(null);
   const [roomState, setRoomState] = useState<RoomStateResponse | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
   const [roomBusyKey, setRoomBusyKey] = useState<string | null>(null);
@@ -290,6 +394,7 @@ export default function App() {
   const [roomShopCategory, setRoomShopCategory] = useState<RoomShopCategoryId>("all");
   const roomFrameRef = useRef<HTMLDivElement | null>(null);
   const roomStateRef = useRef<RoomStateResponse | null>(null);
+  const hallCardRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   useEffect(() => {
     const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
@@ -360,6 +465,15 @@ export default function App() {
     if (view !== "bookshelf") {
       setBookshelfPage(1);
     }
+
+    if (view !== "hallOfReads") {
+      setHallStickerDragState(null);
+    }
+
+    if (view !== "bookCompletion") {
+      setCompletionChoiceError(null);
+      setCompletedBookSavingKey(null);
+    }
   }, [view]);
 
   const parseNumberInput = (value: string, fallback = 0) => {
@@ -414,6 +528,21 @@ export default function App() {
 
     return Array.from(unique.values()).sort((a, b) => a.label.localeCompare(b.label));
   }, [adminReflectionSessions, responsesClassFilter]);
+
+  const roomTestSpriteKeys = useMemo(
+    () => Object.keys(ROOM_SPRITE_CONFIG).slice().sort((a, b) => a.localeCompare(b)),
+    []
+  );
+  const roomTestItemOptions = useMemo(
+    () => [
+      { key: ROOM_TEST_GRANT_ALL_DECOR_KEY, label: "ALL decor (grant every sprite)" },
+      ...roomTestSpriteKeys.map((itemKey) => ({
+        key: itemKey,
+        label: formatRoomItemLabel(itemKey),
+      })),
+    ],
+    [roomTestSpriteKeys]
+  );
 
   const filteredReflectionSessions = useMemo(() => {
     const search = responsesSearchInput.trim().toLowerCase();
@@ -530,6 +659,65 @@ export default function App() {
   }, [filteredRoomShopItems, roomShopPage]);
 
   const roomShopTotalPages = Math.max(1, Math.ceil(filteredRoomShopItems.length / ROOM_SHOP_PAGE_SIZE));
+  const totalCompletedPages = useMemo(
+    () => completedBooks.reduce((sum, book) => sum + Math.max(0, Number(book.total_pages || 0)), 0),
+    [completedBooks]
+  );
+  const completedBookCount = completedBooks.length;
+  const averageSessionMinutes = useMemo(() => {
+    const totalSessions = Math.max(0, Number(stats?.total_sessions ?? 0));
+    if (totalSessions < 1) return 0;
+    const totalMinutes = Math.max(0, Number(stats?.total_hours ?? 0) * 60);
+    return totalMinutes / totalSessions;
+  }, [stats?.total_hours, stats?.total_sessions]);
+  const readingStyleBadges = useMemo(() => {
+    const badges: Array<{ label: string; className: string }> = [];
+
+    if (averageSessionMinutes >= 30) {
+      badges.push({ label: "Marathon Reader", className: "bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200" });
+    } else if (averageSessionMinutes >= 20) {
+      badges.push({ label: "Steady Reader", className: "bg-sky-100 text-sky-700 border-sky-200" });
+    } else {
+      badges.push({ label: "Quick Starter", className: "bg-emerald-100 text-emerald-700 border-emerald-200" });
+    }
+
+    const sessions = Math.max(1, Number(stats?.total_sessions ?? 1));
+    const pagesPerSession = totalCompletedPages / sessions;
+    if (pagesPerSession >= 20) {
+      badges.push({ label: "Page Power", className: "bg-amber-100 text-amber-700 border-amber-200" });
+    } else if (pagesPerSession >= 10) {
+      badges.push({ label: "Page Explorer", className: "bg-indigo-100 text-indigo-700 border-indigo-200" });
+    } else {
+      badges.push({ label: "Thoughtful Reader", className: "bg-teal-100 text-teal-700 border-teal-200" });
+    }
+
+    if (completedBookCount >= 10) {
+      badges.push({ label: "Collection Builder", className: "bg-rose-100 text-rose-700 border-rose-200" });
+    }
+
+    return badges;
+  }, [averageSessionMinutes, completedBookCount, stats?.total_sessions, totalCompletedPages]);
+  const hallMilestoneStatus = useMemo(
+    () =>
+      HALL_MILESTONES.map((milestone) => ({
+        milestone,
+        unlocked: completedBookCount >= milestone,
+      })),
+    [completedBookCount]
+  );
+  const latestHallMilestone = useMemo(() => {
+    let unlockedMilestone: number | null = null;
+    for (const value of HALL_MILESTONES) {
+      if (completedBookCount >= value) unlockedMilestone = value;
+    }
+    return unlockedMilestone;
+  }, [completedBookCount]);
+  const nextHallMilestone = useMemo(() => {
+    for (const value of HALL_MILESTONES) {
+      if (completedBookCount < value) return value;
+    }
+    return null;
+  }, [completedBookCount]);
 
   const hasPositionableEquippedRoomItems = equippedRoomSprites.length > 0;
 
@@ -550,6 +738,21 @@ export default function App() {
   }, [responseStudentOptions, responsesStudentFilter]);
 
   useEffect(() => {
+    const rosterStudents = adminRoster?.students ?? [];
+    if (!rosterStudents.length) {
+      if (roomTestStudentId) {
+        setRoomTestStudentId("");
+      }
+      return;
+    }
+
+    const hasSelected = rosterStudents.some((row) => String(row.id) === roomTestStudentId);
+    if (!roomTestStudentId || !hasSelected) {
+      setRoomTestStudentId(String(rosterStudents[0].id));
+    }
+  }, [adminRoster, roomTestStudentId]);
+
+  useEffect(() => {
     setBookshelfPage((prev) => Math.min(prev, bookshelfTotalPages));
   }, [bookshelfTotalPages]);
 
@@ -560,6 +763,19 @@ export default function App() {
   useEffect(() => {
     setRoomShopPage(1);
   }, [roomShopCategory]);
+
+  useEffect(() => {
+    setHallStickerDraftPositionByCompletion((prev) => {
+      const next: Record<number, { x: number; y: number }> = {};
+      for (const book of completedBooks) {
+        const key = book.completion_number;
+        if (prev[key]) {
+          next[key] = prev[key];
+        }
+      }
+      return next;
+    });
+  }, [completedBooks]);
 
   const normalizeClassCode = (value: string) => value.trim().toUpperCase();
   const normalizeNickname = (value: string) => value.trim();
@@ -576,6 +792,194 @@ export default function App() {
     const query = buildStudentQuery();
     if (!query) return path;
     return `${path}?${query}`;
+  };
+
+  const updateCompletedBookMeta = async (
+    completionNumber: number,
+    nextPatch: {
+      sticker_key?: string | null;
+      rating_key?: string | null;
+      sticker_pos_x?: number | null;
+      sticker_pos_y?: number | null;
+    }
+  ) => {
+    if (!student) {
+      throw new Error("Student session not found");
+    }
+
+    const existing = completedBooks.find((book) => book.completion_number === completionNumber);
+    if (!existing) {
+      throw new Error("Completed book entry not found");
+    }
+
+    const stickerKey = nextPatch.sticker_key === undefined ? existing.sticker_key ?? null : nextPatch.sticker_key;
+    const ratingKey = nextPatch.rating_key === undefined ? existing.rating_key ?? null : nextPatch.rating_key;
+    const stickerPosX = nextPatch.sticker_pos_x === undefined ? existing.sticker_pos_x ?? null : nextPatch.sticker_pos_x;
+    const stickerPosY = nextPatch.sticker_pos_y === undefined ? existing.sticker_pos_y ?? null : nextPatch.sticker_pos_y;
+
+    if (
+      (existing.sticker_key ?? null) === stickerKey &&
+      (existing.rating_key ?? null) === ratingKey &&
+      (existing.sticker_pos_x ?? null) === stickerPosX &&
+      (existing.sticker_pos_y ?? null) === stickerPosY
+    ) {
+      return {
+        completion_number: completionNumber,
+        sticker_key: stickerKey,
+        rating_key: ratingKey,
+        sticker_pos_x: stickerPosX,
+        sticker_pos_y: stickerPosY,
+      };
+    }
+
+    setCompletedBookSavingKey(completionNumber);
+
+    try {
+      const response = await fetch("/api/books/completed", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          completion_number: completionNumber,
+          sticker_key: stickerKey,
+          rating_key: ratingKey,
+          sticker_pos_x: stickerPosX,
+          sticker_pos_y: stickerPosY,
+          class_code: student.class_code,
+          nickname: student.nickname,
+        }),
+      });
+
+      if (!response.ok) {
+        let message = `Failed to save completion choices: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          if (typeof errorBody?.error === "string") {
+            message = errorBody.error;
+          }
+        } catch {
+          // Ignore parse failure and keep fallback message.
+        }
+        throw new Error(message);
+      }
+
+      const updated = (await response.json()) as {
+        completion_number: number;
+        sticker_key: string | null;
+        rating_key: string | null;
+        sticker_pos_x: number | null;
+        sticker_pos_y: number | null;
+      };
+
+      setCompletedBooks((prev) =>
+        prev.map((book) =>
+          book.completion_number === completionNumber
+            ? {
+                ...book,
+                sticker_key: updated.sticker_key ?? null,
+                rating_key: updated.rating_key ?? null,
+                sticker_pos_x: updated.sticker_pos_x ?? null,
+                sticker_pos_y: updated.sticker_pos_y ?? null,
+              }
+            : book
+        )
+      );
+      return updated;
+    } catch (err: any) {
+      throw new Error(String(err?.message ?? err));
+    } finally {
+      setCompletedBookSavingKey(null);
+    }
+  };
+
+  const getHallStickerPosition = (book: CompletedBook) => {
+    const draft = hallStickerDraftPositionByCompletion[book.completion_number];
+    if (draft) {
+      return {
+        x: clampNumber(draft.x, 6, 94),
+        y: clampNumber(draft.y, 10, 90),
+      };
+    }
+
+    const parsedX = Number(book.sticker_pos_x);
+    const parsedY = Number(book.sticker_pos_y);
+    const hasStoredX = Number.isFinite(parsedX);
+    const hasStoredY = Number.isFinite(parsedY);
+
+    return {
+      x: clampNumber(hasStoredX ? parsedX : DEFAULT_HALL_STICKER_POSITION.x, 6, 94),
+      y: clampNumber(hasStoredY ? parsedY : DEFAULT_HALL_STICKER_POSITION.y, 10, 90),
+    };
+  };
+
+  const handleHallStickerPointerDown = (event: React.PointerEvent<HTMLButtonElement>, book: CompletedBook) => {
+    if (!book.sticker_key || completedBookSavingKey === book.completion_number) return;
+
+    event.preventDefault();
+    const current = getHallStickerPosition(book);
+
+    setHallStickerDragState({
+      completionNumber: book.completion_number,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: current.x,
+      startY: current.y,
+    });
+
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+
+  const handleHallStickerPointerMove = (event: React.PointerEvent<HTMLButtonElement>, book: CompletedBook) => {
+    if (
+      !hallStickerDragState ||
+      hallStickerDragState.completionNumber !== book.completion_number ||
+      hallStickerDragState.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    const cardElement = hallCardRefs.current[book.completion_number];
+    if (!cardElement) return;
+
+    const rect = cardElement.getBoundingClientRect();
+    const dxPct = ((event.clientX - hallStickerDragState.startClientX) / Math.max(1, rect.width)) * 100;
+    const dyPct = ((event.clientY - hallStickerDragState.startClientY) / Math.max(1, rect.height)) * 100;
+
+    const nextX = clampNumber(hallStickerDragState.startX + dxPct, 6, 94);
+    const nextY = clampNumber(hallStickerDragState.startY + dyPct, 10, 90);
+
+    setHallStickerDraftPositionByCompletion((prev) => ({
+      ...prev,
+      [book.completion_number]: { x: nextX, y: nextY },
+    }));
+  };
+
+  const handleHallStickerPointerUp = (event: React.PointerEvent<HTMLButtonElement>, book: CompletedBook) => {
+    if (
+      !hallStickerDragState ||
+      hallStickerDragState.completionNumber !== book.completion_number ||
+      hallStickerDragState.pointerId !== event.pointerId
+    ) {
+      return;
+    }
+
+    event.currentTarget.releasePointerCapture?.(event.pointerId);
+    setHallStickerDragState(null);
+
+    const nextPosition =
+      hallStickerDraftPositionByCompletion[book.completion_number] ??
+      getHallStickerPosition({
+        ...book,
+        sticker_pos_x: hallStickerDragState.startX,
+        sticker_pos_y: hallStickerDragState.startY,
+      });
+
+    void updateCompletedBookMeta(book.completion_number, {
+      sticker_pos_x: nextPosition.x,
+      sticker_pos_y: nextPosition.y,
+    }).catch((err: any) => {
+      console.error("Failed to save Hall sticker position", err);
+    });
   };
 
   const openAdminPrompt = () => {
@@ -1087,6 +1491,76 @@ export default function App() {
     }
   };
 
+  const handleRoomTestGrant = async () => {
+    if (!adminAccessKey) {
+      setRoomTestError("Admin session expired. Re-open admin mode.");
+      return;
+    }
+
+    const studentId = Number.parseInt(roomTestStudentId, 10);
+    if (!Number.isFinite(studentId) || studentId <= 0) {
+      setRoomTestError("Choose a student first.");
+      return;
+    }
+
+    if (!roomTestItemKey.trim()) {
+      setRoomTestError("Choose a room sprite.");
+      return;
+    }
+    const grantAllDecor = roomTestItemKey === ROOM_TEST_GRANT_ALL_DECOR_KEY;
+    if (grantAllDecor && roomTestSpriteKeys.length === 0) {
+      setRoomTestError("No room sprites are configured.");
+      return;
+    }
+
+    setRoomTestBusy(true);
+    setRoomTestError(null);
+    setRoomTestMessage(null);
+
+    try {
+      const response = await fetch("/api/admin/room-test", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-admin-key": adminAccessKey,
+        },
+        body: JSON.stringify({
+          student_id: studentId,
+          item_key: grantAllDecor ? undefined : roomTestItemKey,
+          item_keys: grantAllDecor ? roomTestSpriteKeys : undefined,
+          equip: roomTestEquipNow,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(typeof data?.error === "string" ? data.error : `Room test failed: ${response.status}`);
+      }
+
+      const targetStudent = adminRoster?.students?.find((row) => row.id === studentId);
+      const targetLabel = targetStudent ? `${targetStudent.nickname} (${targetStudent.class_code})` : `student #${studentId}`;
+      const itemLabel = grantAllDecor
+        ? "ALL decor"
+        : roomTestItemOptions.find((option) => option.key === roomTestItemKey)?.label ?? roomTestItemKey;
+      setRoomTestMessage(
+        `Added ${itemLabel} to ${targetLabel}${roomTestEquipNow ? " and equipped it" : ""}.`
+      );
+
+      if (
+        student &&
+        targetStudent &&
+        targetStudent.class_code === student.class_code &&
+        targetStudent.nickname === student.nickname
+      ) {
+        await fetchInitialData();
+      }
+    } catch (err: any) {
+      setRoomTestError(String(err?.message ?? err));
+    } finally {
+      setRoomTestBusy(false);
+    }
+  };
+
   const handleTeacherSetupSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
 
@@ -1202,12 +1676,13 @@ export default function App() {
     }
 
     try {
-      const [booksResult, activeBookResult, statsResult, roomResult, achievementsResult] = await Promise.allSettled([
+      const [booksResult, activeBookResult, statsResult, roomResult, achievementsResult, completedBooksResult] = await Promise.allSettled([
         fetch(withStudentQuery("/api/books")),
         fetch(withStudentQuery("/api/books/active")),
         fetch(withStudentQuery("/api/stats")),
         fetch(withStudentQuery("/api/room")),
         fetch(withStudentQuery("/api/achievements")),
+        fetch(withStudentQuery("/api/books/completed")),
       ]);
 
       let booksData: Book[] = [];
@@ -1283,6 +1758,19 @@ export default function App() {
         setAchievementsData(null);
       }
 
+      if (completedBooksResult.status === "fulfilled") {
+        if (completedBooksResult.value.ok) {
+          const completedData = (await completedBooksResult.value.json()) as CompletedBook[];
+          setCompletedBooks(Array.isArray(completedData) ? completedData : []);
+        } else {
+          console.error(`completed books failed: ${completedBooksResult.value.status}`);
+          setCompletedBooks([]);
+        }
+      } else {
+        console.error("completed books request failed", completedBooksResult.reason);
+        setCompletedBooks([]);
+      }
+
       if (booksData.length === 0 && !statsData) {
         setView("setup");
         return;
@@ -1298,6 +1786,11 @@ export default function App() {
   const handleStartSession = () => {
     if (!activeBook) return;
     setSessionRewardSummary(null);
+    setPendingBookCompletion(null);
+    setSelectedCompletionSticker(null);
+    setSelectedCompletionRating(null);
+    setHallStickerDragState(null);
+    setCompletionChoiceError(null);
     setTimerSeconds(0);
     setIsTimerRunning(true);
     setView("reading");
@@ -1372,6 +1865,12 @@ export default function App() {
     setResponsesSearchInput("");
     setResponsesClassFilter("all");
     setResponsesStudentFilter("all");
+    setRoomTestStudentId("");
+    setRoomTestItemKey(Object.keys(ROOM_SPRITE_CONFIG)[0] ?? "small_plant");
+    setRoomTestEquipNow(true);
+    setRoomTestBusy(false);
+    setRoomTestError(null);
+    setRoomTestMessage(null);
     setAdminAccessKey(null);
     setAdminSection("roster");
     setTeacherClassCodeInput("");
@@ -1393,6 +1892,14 @@ export default function App() {
     setStats(null);
     setSessionRewardSummary(null);
     setAchievementsData(null);
+    setCompletedBooks([]);
+    setPendingBookCompletion(null);
+    setSelectedCompletionSticker(null);
+    setSelectedCompletionRating(null);
+    setHallStickerDraftPositionByCompletion({});
+    setHallStickerDragState(null);
+    setCompletedBookSavingKey(null);
+    setCompletionChoiceError(null);
     setRoomState(null);
     setRoomError(null);
     setRoomBusyKey(null);
@@ -1480,6 +1987,7 @@ export default function App() {
         achievements_unlocked: Array.isArray(rewardData.achievements_unlocked)
           ? rewardData.achievements_unlocked
           : [],
+        book_completion: rewardData.book_completion ?? null,
       });
 
       setActiveBook(prev =>
@@ -1496,9 +2004,50 @@ export default function App() {
       );
 
       await fetchInitialData();
-      setView("celebration");
+      if (rewardData.book_completion?.completion_number) {
+        setPendingBookCompletion(rewardData.book_completion);
+        setSelectedCompletionSticker(rewardData.book_completion.sticker_key ?? null);
+        setSelectedCompletionRating(rewardData.book_completion.rating_key ?? null);
+        setCompletionChoiceError(null);
+        setView("bookCompletion");
+      } else {
+        setPendingBookCompletion(null);
+        setSelectedCompletionSticker(null);
+        setSelectedCompletionRating(null);
+        setView("celebration");
+      }
     } catch (err) {
       console.error("Failed to save session", err);
+    }
+  };
+
+  const handleBookCompletionChoiceSubmit = async () => {
+    if (!pendingBookCompletion) {
+      setView("celebration");
+      return;
+    }
+
+    if (!selectedCompletionSticker || !selectedCompletionRating) {
+      setCompletionChoiceError("Pick one sticker and one rating before continuing.");
+      return;
+    }
+
+    setCompletionChoiceError(null);
+
+    try {
+      await updateCompletedBookMeta(pendingBookCompletion.completion_number, {
+        sticker_key: selectedCompletionSticker,
+        rating_key: selectedCompletionRating,
+        sticker_pos_x: pendingBookCompletion.sticker_pos_x ?? DEFAULT_HALL_STICKER_POSITION.x,
+        sticker_pos_y: pendingBookCompletion.sticker_pos_y ?? DEFAULT_HALL_STICKER_POSITION.y,
+      });
+
+      setPendingBookCompletion(null);
+      setSelectedCompletionSticker(null);
+      setSelectedCompletionRating(null);
+      setView("celebration");
+    } catch (err: any) {
+      setCompletionChoiceError(String(err?.message ?? err));
     }
   };
 
@@ -1591,6 +2140,7 @@ export default function App() {
       ? "room-content-layer h-full pointer-events-none"
       : "room-content-layer room-content-fit p-3 md:p-4 h-full"
     : "";
+  const showBookshelfHeader = Boolean(student && view === "bookshelf");
   const mainAreaClassName = showRoomShell ? "flex-1 min-h-0" : "";
   const showFooterStats = Boolean(
     stats &&
@@ -1737,7 +2287,7 @@ export default function App() {
       {showAppChrome && (
       <>
       {/* Header / XP Bar */}
-      {student && view !== "student" && view !== "admin" && (
+      {showBookshelfHeader && (
         <header className={showRoomShell ? "mb-3" : "mb-8"}>
           <div className="flex justify-between items-end mb-2">
             <div className="flex items-center gap-2">
@@ -1897,6 +2447,17 @@ export default function App() {
                     }`}
                   >
                     Responses
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setAdminSection("roomTest")}
+                    className={`py-2 px-4 rounded-xl border-2 font-bold text-sm ${
+                      adminSection === "roomTest"
+                        ? "border-slate-900 bg-violet-200 text-slate-900"
+                        : "border-slate-200 bg-white text-slate-500"
+                    }`}
+                  >
+                    Room Test
                   </button>
                   <button
                     type="button"
@@ -2144,6 +2705,74 @@ export default function App() {
               </div>
             )}
 
+            {adminSection === "roomTest" && (
+              <div className="quest-card">
+                <h3 className="font-bold text-lg mb-2">Room Deco Test Mode</h3>
+                <p className="text-slate-500 mb-4">
+                  Admin-only: grant any room sprite directly to a student for testing.
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-bold mb-1">Student</label>
+                    <select
+                      value={roomTestStudentId}
+                      onChange={(e) => setRoomTestStudentId(e.target.value)}
+                      className="quest-input"
+                      disabled={!adminRoster?.students?.length}
+                    >
+                      {(adminRoster?.students ?? []).map((row) => (
+                        <option key={row.id} value={String(row.id)}>
+                          {row.nickname} ({row.class_code}) - L{row.level}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-bold mb-1">Room Sprite</label>
+                    <select
+                      value={roomTestItemKey}
+                      onChange={(e) => setRoomTestItemKey(e.target.value)}
+                      className="quest-input"
+                    >
+                      {roomTestItemOptions.map((option) => (
+                        <option key={option.key} value={option.key}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <label className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={roomTestEquipNow}
+                    onChange={(e) => setRoomTestEquipNow(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                  />
+                  Equip immediately
+                </label>
+
+                {roomTestError && (
+                  <p className="mt-3 text-sm text-rose-600 font-medium">{roomTestError}</p>
+                )}
+                {roomTestMessage && (
+                  <p className="mt-3 text-sm text-emerald-700 font-medium">{roomTestMessage}</p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleRoomTestGrant}
+                  disabled={roomTestBusy || !roomTestStudentId}
+                  className="quest-button w-full md:w-auto mt-4 disabled:opacity-50"
+                >
+                  {roomTestBusy ? "Applying..." : "Grant Sprite"}
+                </button>
+              </div>
+            )}
+
             {adminSection === "responses" && (
               <div className="space-y-4">
                 <div className="quest-card">
@@ -2338,10 +2967,18 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setView("achievements")}
-                    className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                    className="group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-amber-300 bg-[linear-gradient(135deg,#fff7d1,#fde68a)] font-extrabold text-amber-900 shadow-[0_3px_0_0_rgba(180,83,9,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(180,83,9,0.45)] transition-all flex items-center gap-2"
                   >
-                    <Trophy className="w-4 h-4" />
+                    <Trophy className="w-4 h-4 text-amber-700 group-hover:scale-110 transition-transform" />
                     Achievements
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setView("hallOfReads")}
+                    className="group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-sky-300 bg-[linear-gradient(135deg,#e0f2fe,#bae6fd)] font-extrabold text-sky-900 shadow-[0_3px_0_0_rgba(3,105,161,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(3,105,161,0.45)] transition-all flex items-center gap-2"
+                  >
+                    <BookOpen className="w-4 h-4 text-sky-700 group-hover:scale-110 transition-transform" />
+                    Hall of Reads
                   </button>
                   <button
                     type="button"
@@ -2351,7 +2988,7 @@ export default function App() {
                         void loadRoomState();
                       }
                     }}
-                    className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+                    className="group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-violet-300 bg-[linear-gradient(135deg,#ede9fe,#ddd6fe)] font-extrabold text-violet-900 shadow-[0_3px_0_0_rgba(91,33,182,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(91,33,182,0.45)] transition-all"
                   >
                     My Room
                   </button>
@@ -2837,6 +3474,205 @@ export default function App() {
           </motion.div>
         )}
 
+        {view === "hallOfReads" && (
+          <motion.div
+            key="hallOfReads"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="space-y-6"
+          >
+            <div className={roomMenuCardClass}>
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-2xl font-bold flex items-center gap-2">
+                    <BookOpen className="w-6 h-6 text-sky-500" />
+                    Hall of Reads
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    {completedBooks.length
+                      ? `${completedBooks.length} completed book${completedBooks.length === 1 ? "" : "s"} cataloged.`
+                      : "Complete a book to add it to your Hall of Reads."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setView("bookshelf")}
+                  className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+                >
+                  Back to Bookshelf
+                </button>
+              </div>
+
+              <div className={roomMenuBodyClass}>
+                {completedBooks.length > 0 && (
+                  <div className="mb-3 space-y-3">
+                    {latestHallMilestone != null && (
+                      <div className="rounded-xl border-2 border-amber-200 bg-amber-50 p-3">
+                        <p className="text-xs font-bold uppercase tracking-wide text-amber-700">Milestone Celebration</p>
+                        <p className="text-sm font-semibold text-slate-800 mt-1">
+                          Hall Badge Unlocked: {latestHallMilestone} Books Completed
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-[11px] font-bold uppercase text-slate-500">Completed Books</p>
+                        <p className="text-xl font-bold text-slate-900">{completedBookCount}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-[11px] font-bold uppercase text-slate-500">Completed Pages</p>
+                        <p className="text-xl font-bold text-slate-900">{totalCompletedPages}</p>
+                      </div>
+                      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <p className="text-[11px] font-bold uppercase text-slate-500">Avg Session</p>
+                        <p className="text-xl font-bold text-slate-900">{Math.round(averageSessionMinutes)} min</p>
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <p className="text-[11px] font-bold uppercase text-slate-500 mb-2">Reading Style Badges</p>
+                      <div className="flex flex-wrap gap-2">
+                        {readingStyleBadges.map((badge) => (
+                          <span
+                            key={badge.label}
+                            className={`rounded-full border px-2 py-1 text-xs font-bold ${badge.className}`}
+                          >
+                            {badge.label}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border border-slate-200 bg-white p-3">
+                      <p className="text-[11px] font-bold uppercase text-slate-500 mb-2">Hall Milestones</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {hallMilestoneStatus.map((entry) => (
+                          <span
+                            key={entry.milestone}
+                            className={`rounded-full border px-2 py-1 text-xs font-bold ${
+                              entry.unlocked
+                                ? "bg-emerald-100 text-emerald-700 border-emerald-200"
+                                : "bg-slate-100 text-slate-500 border-slate-200"
+                            }`}
+                          >
+                            {entry.unlocked ? "Unlocked" : "Locked"} {entry.milestone}
+                          </span>
+                        ))}
+                        {nextHallMilestone != null && (
+                          <span className="text-xs font-semibold text-slate-500">
+                            {Math.max(0, nextHallMilestone - completedBookCount)} more for next frame unlock.
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {completedBooks.length ? (
+                  <div className="space-y-3 pr-1">
+                    {completedBooks.map((book) => {
+                      const sizeBadge = getBookSizeBadge(Math.max(0, Number(book.total_pages || 0)));
+                      const frameStyle = getHallFrameStyle(book.completion_number);
+                      const selectedSticker = getStickerOption(book.sticker_key);
+                      const selectedRating = getRatingOption(book.rating_key);
+                      const stickerPosition = getHallStickerPosition(book);
+                      const isDraggingSticker = hallStickerDragState?.completionNumber === book.completion_number;
+
+                      return (
+                        <div key={book.completion_number} className={frameStyle.wrapperClass}>
+                          <div
+                            ref={(element) => {
+                              hallCardRefs.current[book.completion_number] = element;
+                            }}
+                            className={`${frameStyle.innerClass} p-4 relative`}
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="font-semibold text-slate-900">{book.title}</p>
+                                <p className="text-sm text-slate-600">by {book.author}</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`inline-flex h-10 w-10 items-center justify-center rounded-full border-2 text-sm font-black ${frameStyle.stampClass}`}
+                                  title={`Completion #${book.completion_number}`}
+                                >
+                                  #{book.completion_number}
+                                </span>
+                              </div>
+                            </div>
+
+                            {selectedSticker && (
+                              <button
+                                type="button"
+                                onPointerDown={(event) => handleHallStickerPointerDown(event, book)}
+                                onPointerMove={(event) => handleHallStickerPointerMove(event, book)}
+                                onPointerUp={(event) => handleHallStickerPointerUp(event, book)}
+                                onPointerCancel={(event) => handleHallStickerPointerUp(event, book)}
+                                disabled={completedBookSavingKey === book.completion_number}
+                                className={`absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-[radial-gradient(circle_at_32%_24%,#fff7d1,#fde68a)] px-3 py-2 text-lg shadow-[0_4px_0_0_rgba(180,83,9,0.35)] transition-transform ${
+                                  isDraggingSticker ? "cursor-grabbing scale-105 rotate-6" : "-rotate-8 cursor-grab hover:scale-105"
+                                } disabled:opacity-50`}
+                                style={{
+                                  left: `${stickerPosition.x}%`,
+                                  top: `${stickerPosition.y}%`,
+                                  touchAction: "none",
+                                }}
+                                title={`Drag sticker: ${selectedSticker.label}`}
+                                aria-label={`Drag sticker: ${selectedSticker.label}`}
+                              >
+                                <span className="drop-shadow-sm">{selectedSticker.emoji}</span>
+                              </button>
+                            )}
+
+                            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold text-slate-600">
+                              <span className={`rounded-full border px-2 py-1 ${sizeBadge.className}`}>{sizeBadge.label}</span>
+                              <span className="rounded-full border border-slate-200 bg-slate-100 px-2 py-1 text-slate-600">
+                                {frameStyle.frameLabel}
+                              </span>
+                              <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
+                                {book.total_pages} pages
+                              </span>
+                              <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-slate-600">
+                                Completed {new Date(book.completed_at).toLocaleDateString()}
+                              </span>
+                            </div>
+
+                            <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                              <span
+                                className={`rounded-full border px-2 py-1 font-semibold ${
+                                  selectedSticker?.chipClass ?? "border-slate-200 bg-white text-slate-600"
+                                }`}
+                              >
+                                Sticker: {selectedSticker ? `${selectedSticker.emoji} ${selectedSticker.label}` : "Not chosen"}
+                              </span>
+                              <span
+                                className={`rounded-full border px-2 py-1 font-semibold ${
+                                  selectedRating?.chipClass ?? "border-slate-200 bg-white text-slate-600"
+                                }`}
+                              >
+                                Rating: {selectedRating ? `${selectedRating.emoji} ${selectedRating.label}` : "Not chosen"}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 p-5">
+                    <p className="font-semibold text-slate-800">Your Hall of Reads is waiting for the first trophy.</p>
+                    <p className="text-sm text-slate-500 mt-1">
+                      Finish your active book by crossing the final page to earn your first book completion reward.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+
         {view === "reading" && (
           <motion.div 
             key="reading"
@@ -3000,13 +3836,103 @@ export default function App() {
           </motion.div>
         )}
 
+        {view === "bookCompletion" && pendingBookCompletion && (
+          <motion.div
+            key="bookCompletion"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="quest-card"
+          >
+            <div className="text-center">
+              <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">Book Completed</p>
+              <h2 className="text-2xl font-bold mt-1">Customize Your Hall Card</h2>
+              <p className="text-sm text-slate-500 mt-2">
+                {pendingBookCompletion.title} is now in your Hall of Reads. Pick a sticker and rating first.
+              </p>
+            </div>
+
+            <div className="mt-5 rounded-xl border-2 border-emerald-200 bg-emerald-50 px-4 py-3">
+              <p className="text-xs font-bold uppercase tracking-wide text-emerald-700">
+                Completion #{pendingBookCompletion.completion_number}
+              </p>
+              <p className="text-sm font-semibold text-slate-800 mt-1">{pendingBookCompletion.total_pages} pages completed</p>
+            </div>
+
+            <div className="mt-5">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Pick Your Sticker</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {BOOK_STICKER_OPTIONS.map((option) => {
+                  const selected = selectedCompletionSticker === option.key;
+                  return (
+                    <button
+                      key={`completion-sticker-${option.key}`}
+                      type="button"
+                      disabled={completedBookSavingKey === pendingBookCompletion.completion_number}
+                      onClick={() => setSelectedCompletionSticker(option.key)}
+                      className={`rounded-xl border-2 px-3 py-2 text-sm font-bold transition-colors ${option.chipClass} ${
+                        selected ? "ring-2 ring-slate-900" : "hover:opacity-100 opacity-90"
+                      } disabled:opacity-50`}
+                    >
+                      <span className="mr-1">{option.emoji}</span>
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Rate This Book</p>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                {BOOK_RATING_OPTIONS.map((option) => {
+                  const selected = selectedCompletionRating === option.key;
+                  return (
+                    <button
+                      key={`completion-rating-${option.key}`}
+                      type="button"
+                      disabled={completedBookSavingKey === pendingBookCompletion.completion_number}
+                      onClick={() => setSelectedCompletionRating(option.key)}
+                      className={`rounded-xl border-2 px-3 py-2 text-sm font-bold transition-colors ${option.chipClass} ${
+                        selected ? "ring-2 ring-slate-900" : "hover:opacity-100 opacity-90"
+                      } disabled:opacity-50`}
+                    >
+                      <span className="mr-1">{option.emoji}</span>
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {completionChoiceError && (
+              <p className="mt-4 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                {completionChoiceError}
+              </p>
+            )}
+
+            <button
+              type="button"
+              disabled={
+                completedBookSavingKey === pendingBookCompletion.completion_number ||
+                !selectedCompletionSticker ||
+                !selectedCompletionRating
+              }
+              onClick={handleBookCompletionChoiceSubmit}
+              className="quest-button w-full mt-5 disabled:opacity-50"
+            >
+              {completedBookSavingKey === pendingBookCompletion.completion_number ? "Saving..." : "Save Choices"}
+            </button>
+          </motion.div>
+        )}
+
         {view === "celebration" && (
           <motion.div 
             key="celebration"
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
-            className="quest-card text-center py-12"
+            className="quest-card text-center py-12 max-h-[72vh] celebration-scroll"
           >
             <motion.div 
               initial={{ y: 20, opacity: 0 }}
@@ -3136,7 +4062,7 @@ export default function App() {
             <div className="bg-white p-3 rounded-2xl border-2 border-slate-900 mb-2 flex items-center justify-center">
               <BookIcon className="w-5 h-5 text-sky-500" />
             </div>
-            <p className="text-[10px] font-bold uppercase text-slate-700">Books Read</p>
+            <p className="text-[10px] font-bold uppercase text-slate-700">Books Completed</p>
             <p className="font-bold text-slate-900">{stats.total_books}</p>
           </div>
           <div className="text-center">

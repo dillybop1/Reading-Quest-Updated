@@ -85,6 +85,10 @@ export const ensureSchema = async () => {
         student_id INTEGER REFERENCES students(id),
         book_id INTEGER REFERENCES books(id),
         completion_number INTEGER NOT NULL,
+        sticker_key TEXT,
+        rating_key TEXT,
+        sticker_pos_x REAL,
+        sticker_pos_y REAL,
         completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
@@ -140,6 +144,10 @@ export const ensureSchema = async () => {
     await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS student_id INTEGER`);
     await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS book_id INTEGER`);
     await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS completion_number INTEGER`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS sticker_key TEXT`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS rating_key TEXT`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS sticker_pos_x REAL`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS sticker_pos_y REAL`);
     await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS student_id INTEGER`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS item_key TEXT`);

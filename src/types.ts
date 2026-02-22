@@ -29,6 +29,19 @@ export interface ReadingSession {
   xp_earned: number;
 }
 
+export interface CompletedBook {
+  book_id: number;
+  title: string;
+  author: string;
+  total_pages: number;
+  completion_number: number;
+  completed_at: string;
+  sticker_key: string | null;
+  rating_key: string | null;
+  sticker_pos_x: number | null;
+  sticker_pos_y: number | null;
+}
+
 export interface StudentIdentity {
   class_code: string;
   nickname: string;
@@ -105,6 +118,19 @@ export interface SessionRewardSummary {
   achievement_bonus_xp?: number;
   achievement_bonus_coins?: number;
   achievements_unlocked?: AchievementUnlock[];
+  book_completion?: SessionBookCompletion | null;
+}
+
+export interface SessionBookCompletion {
+  book_id: number;
+  title: string;
+  total_pages: number;
+  completion_number: number;
+  completed_at: string;
+  sticker_key: string | null;
+  rating_key: string | null;
+  sticker_pos_x: number | null;
+  sticker_pos_y: number | null;
 }
 
 export interface AchievementUnlock {
