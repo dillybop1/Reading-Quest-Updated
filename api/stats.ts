@@ -75,7 +75,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       query("SELECT * FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1", [student.studentId]),
       query("SELECT COUNT(*)::int AS count FROM sessions WHERE student_id = $1", [student.studentId]),
       query("SELECT COALESCE(SUM(duration_minutes), 0)::int AS total FROM sessions WHERE student_id = $1", [student.studentId]),
-      query("SELECT COUNT(*)::int AS count FROM books WHERE student_id = $1", [student.studentId]),
+      query("SELECT COUNT(*)::int AS count FROM student_book_completions WHERE student_id = $1", [student.studentId]),
     ]);
 
     const stats = statsResult.rows[0] ?? {

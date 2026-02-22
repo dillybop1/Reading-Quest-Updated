@@ -29,6 +29,19 @@ export interface ReadingSession {
   xp_earned: number;
 }
 
+export interface CompletedBook {
+  book_id: number;
+  title: string;
+  author: string;
+  total_pages: number;
+  completion_number: number;
+  completed_at: string;
+  sticker_key: string | null;
+  rating_key: string | null;
+  sticker_pos_x: number | null;
+  sticker_pos_y: number | null;
+}
+
 export interface StudentIdentity {
   class_code: string;
   nickname: string;
@@ -50,6 +63,8 @@ export interface AdminStudentRow {
   total_coins_earned: number;
   total_sessions: number;
   total_minutes: number;
+  achievements_unlocked: number;
+  latest_achievement_at: string | null;
   active_book: string | null;
   current_page: number | null;
   total_pages: number | null;
@@ -100,6 +115,56 @@ export interface SessionRewardSummary {
   overtime_bonus_coins?: number;
   overtime_minutes?: number;
   milestones_reached: number;
+  achievement_bonus_xp?: number;
+  achievement_bonus_coins?: number;
+  achievements_unlocked?: AchievementUnlock[];
+  book_completion?: SessionBookCompletion | null;
+}
+
+export interface SessionBookCompletion {
+  book_id: number;
+  title: string;
+  total_pages: number;
+  completion_number: number;
+  completed_at: string;
+  sticker_key: string | null;
+  rating_key: string | null;
+  sticker_pos_x: number | null;
+  sticker_pos_y: number | null;
+}
+
+export interface AchievementUnlock {
+  key: string;
+  title: string;
+  description: string;
+  reward_xp: number;
+  reward_coins: number;
+  period_key: string;
+  unlocked_at: string;
+  is_repeatable: boolean;
+}
+
+export interface AchievementProgress {
+  key: string;
+  title: string;
+  description: string;
+  reward_xp: number;
+  reward_coins: number;
+  target: number | null;
+  progress: number;
+  is_unlocked: boolean;
+  is_repeatable: boolean;
+  times_earned: number;
+  current_period_key: string | null;
+}
+
+export interface AchievementsResponse {
+  current_period_key: string;
+  completed_books_count: number;
+  unlocked_total: number;
+  total_available: number;
+  achievements: AchievementProgress[];
+  recent_unlocks: AchievementUnlock[];
 }
 
 export interface RoomItemState {

@@ -68,6 +68,32 @@ export const ensureSchema = async () => {
     `);
 
     await query(`
+      CREATE TABLE IF NOT EXISTS achievement_unlocks (
+        id SERIAL PRIMARY KEY,
+        student_id INTEGER REFERENCES students(id),
+        achievement_key TEXT NOT NULL,
+        period_key TEXT NOT NULL DEFAULT 'lifetime',
+        awarded_xp INTEGER DEFAULT 0,
+        awarded_coins INTEGER DEFAULT 0,
+        unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await query(`
+      CREATE TABLE IF NOT EXISTS student_book_completions (
+        id SERIAL PRIMARY KEY,
+        student_id INTEGER REFERENCES students(id),
+        book_id INTEGER REFERENCES books(id),
+        completion_number INTEGER NOT NULL,
+        sticker_key TEXT,
+        rating_key TEXT,
+        sticker_pos_x REAL,
+        sticker_pos_y REAL,
+        completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await query(`
       CREATE TABLE IF NOT EXISTS student_room_items (
         id SERIAL PRIMARY KEY,
         student_id INTEGER REFERENCES students(id),
@@ -109,6 +135,20 @@ export const ensureSchema = async () => {
     await query(`ALTER TABLE session_reflections ADD COLUMN IF NOT EXISTS question_text TEXT`);
     await query(`ALTER TABLE session_reflections ADD COLUMN IF NOT EXISTS answer_text TEXT`);
     await query(`ALTER TABLE session_reflections ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+    await query(`ALTER TABLE achievement_unlocks ADD COLUMN IF NOT EXISTS student_id INTEGER`);
+    await query(`ALTER TABLE achievement_unlocks ADD COLUMN IF NOT EXISTS achievement_key TEXT`);
+    await query(`ALTER TABLE achievement_unlocks ADD COLUMN IF NOT EXISTS period_key TEXT DEFAULT 'lifetime'`);
+    await query(`ALTER TABLE achievement_unlocks ADD COLUMN IF NOT EXISTS awarded_xp INTEGER DEFAULT 0`);
+    await query(`ALTER TABLE achievement_unlocks ADD COLUMN IF NOT EXISTS awarded_coins INTEGER DEFAULT 0`);
+    await query(`ALTER TABLE achievement_unlocks ADD COLUMN IF NOT EXISTS unlocked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS student_id INTEGER`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS book_id INTEGER`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS completion_number INTEGER`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS sticker_key TEXT`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS rating_key TEXT`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS sticker_pos_x REAL`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS sticker_pos_y REAL`);
+    await query(`ALTER TABLE student_book_completions ADD COLUMN IF NOT EXISTS completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS student_id INTEGER`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS item_key TEXT`);
     await query(`ALTER TABLE student_room_items ADD COLUMN IF NOT EXISTS is_equipped BOOLEAN DEFAULT false`);
@@ -132,6 +172,18 @@ export const ensureSchema = async () => {
       ON user_stats(student_id)
     `);
     await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS achievement_unlocks_student_key_period_key
+      ON achievement_unlocks(student_id, achievement_key, period_key)
+    `);
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS student_book_completions_student_book_key
+      ON student_book_completions(student_id, book_id)
+    `);
+    await query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS student_book_completions_student_completion_number_key
+      ON student_book_completions(student_id, completion_number)
+    `);
+    await query(`
       CREATE UNIQUE INDEX IF NOT EXISTS student_room_items_student_item_key
       ON student_room_items(student_id, item_key)
     `);
@@ -144,6 +196,12 @@ export const ensureSchema = async () => {
     await query(`CREATE INDEX IF NOT EXISTS sessions_student_id_idx ON sessions(student_id)`);
     await query(`CREATE INDEX IF NOT EXISTS session_reflections_student_id_idx ON session_reflections(student_id)`);
     await query(`CREATE INDEX IF NOT EXISTS session_reflections_session_id_idx ON session_reflections(session_id)`);
+    await query(
+      `CREATE INDEX IF NOT EXISTS achievement_unlocks_student_unlocked_at_idx ON achievement_unlocks(student_id, unlocked_at DESC)`
+    );
+    await query(
+      `CREATE INDEX IF NOT EXISTS student_book_completions_student_completed_at_idx ON student_book_completions(student_id, completed_at DESC)`
+    );
     await query(`CREATE INDEX IF NOT EXISTS student_room_items_student_id_idx ON student_room_items(student_id)`);
     await query(`CREATE INDEX IF NOT EXISTS room_starter_template_items_sort_order_idx ON room_starter_template_items(sort_order)`);
   })().catch((err) => {

@@ -1,6 +1,12 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { query } from "./_db.js";
+import { query, withTransaction } from "./_db.js";
 import { resolveStudent } from "./_student.js";
+import {
+  awardBookCompletionAchievement,
+  awardThresholdAchievements,
+  type AchievementUnlock,
+  type QueryRunner,
+} from "./_achievements.js";
 
 const XP_PER_LEVEL = 500;
 const XP_MILESTONE_STEP = 500;
@@ -11,6 +17,11 @@ const STREAK_XP_BONUS_PER_DAY = 0.05;
 const STREAK_XP_BONUS_MAX = 0.5;
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 const OVERTIME_COIN_REWARD_PER_MINUTE = 3;
+
+const toSafeInt = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+};
 
 const parseReflectionEntries = (questions: unknown, answers: unknown) => {
   const questionList = Array.isArray(questions) ? questions : [];
@@ -95,9 +106,9 @@ const getStreakXpMultiplier = (streakDays: number) => {
   return 1 + bonus;
 };
 
-const touchStudentStreak = async (studentId: number) => {
+const touchStudentStreak = async (db: QueryRunner, studentId: number) => {
   const today = getTodayDateString();
-  const currentStats = await query(
+  const currentStats = await db.query(
     "SELECT streak_days, last_active_date::text AS last_active_date FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1",
     [studentId]
   );
@@ -106,7 +117,7 @@ const touchStudentStreak = async (studentId: number) => {
   const next = computeNextStreak(currentStreak, lastActiveDate, today);
 
   if (next.changed) {
-    await query("UPDATE user_stats SET streak_days = $1, last_active_date = $2 WHERE student_id = $3", [
+    await db.query("UPDATE user_stats SET streak_days = $1, last_active_date = $2 WHERE student_id = $3", [
       next.streakDays,
       next.lastActiveDate,
       studentId,
@@ -114,6 +125,33 @@ const touchStudentStreak = async (studentId: number) => {
   }
 
   return next.streakDays;
+};
+
+const tryRecordBookCompletion = async (db: QueryRunner, studentId: number, bookId: number) => {
+  await db.query("SELECT id FROM user_stats WHERE student_id = $1 FOR UPDATE", [studentId]);
+
+  const inserted = await db.query(
+    `
+      WITH next_completion AS (
+        SELECT COALESCE(MAX(completion_number), 0) + 1 AS completion_number
+        FROM student_book_completions
+        WHERE student_id = $1
+      )
+      INSERT INTO student_book_completions (student_id, book_id, completion_number)
+      SELECT $1, $2, next_completion.completion_number
+      FROM next_completion
+      ON CONFLICT (student_id, book_id) DO NOTHING
+      RETURNING completion_number, completed_at
+    `,
+    [studentId, bookId]
+  );
+
+  if (!inserted.rows.length) return null;
+
+  return {
+    completion_number: toSafeInt(inserted.rows[0]?.completion_number),
+    completed_at: String(inserted.rows[0]?.completed_at ?? new Date().toISOString()),
+  };
 };
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -148,100 +186,150 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return res.status(400).json({ error: "Invalid session payload" });
       }
 
-      const bookResult = await query("SELECT id FROM books WHERE id = $1 AND student_id = $2 LIMIT 1", [
-        book_id,
-        student.studentId,
-      ]);
-      if (bookResult.rows.length === 0) {
-        return res.status(404).json({ error: "Book not found for this student" });
-      }
-
-      const streakDays = await touchStudentStreak(student.studentId);
-      const streakMultiplier = getStreakXpMultiplier(streakDays);
-      const safeDurationMinutes = Math.max(0, Math.floor(Number(duration_minutes)));
-      const safeGoalMinutes =
-        goal_minutes == null ? safeDurationMinutes : Math.max(0, Math.floor(Number(goal_minutes)));
-      const overtimeMinutes = Math.max(0, safeDurationMinutes - safeGoalMinutes);
-      const overtimeBonusCoins = overtimeMinutes * OVERTIME_COIN_REWARD_PER_MINUTE;
-      const submittedXp = Math.max(0, Math.floor(Number(xp_earned)));
-      const boostedXpEarned = Math.max(0, Math.round(submittedXp * streakMultiplier));
-
-      const session = await query(
-        `INSERT INTO sessions
-         (book_id, student_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned)
-         VALUES ($1,$2,$3,$4,$5,$6,$7)
-         RETURNING *`,
-        [book_id, student.studentId, start_page, end_page, chapters_finished, safeDurationMinutes, boostedXpEarned]
-      );
-
-      const sessionId = session.rows[0]?.id;
-      const reflectionEntries = parseReflectionEntries(questions, answers);
-      if (Number.isFinite(sessionId) && reflectionEntries.length > 0) {
-        for (const entry of reflectionEntries) {
-          await query(
-            `
-              INSERT INTO session_reflections
-              (session_id, student_id, book_id, question_index, question_text, answer_text)
-              VALUES ($1, $2, $3, $4, $5, $6)
-            `,
-            [
-              sessionId,
-              student.studentId,
-              book_id,
-              entry.question_index,
-              entry.question_text,
-              entry.answer_text,
-            ]
-          );
+      const sessionPayload = await withTransaction(async (db) => {
+        const bookResult = await db.query(
+          "SELECT id, title, current_page, total_pages FROM books WHERE id = $1 AND student_id = $2 LIMIT 1",
+          [book_id, student.studentId]
+        );
+        if (!bookResult.rows.length) {
+          throw new Error("BOOK_NOT_FOUND");
         }
-      }
 
-      // Update book current page
-      await query("UPDATE books SET current_page = $1 WHERE id = $2 AND student_id = $3", [
-        end_page,
-        book_id,
-        student.studentId,
-      ]);
+        const bookRow = bookResult.rows[0] ?? {};
+        const previousBookPage = Math.max(0, toSafeInt(bookRow.current_page));
+        const totalBookPages = Math.max(0, toSafeInt(bookRow.total_pages));
 
-      const statsBefore = await query(
-        "SELECT total_xp, coins, total_coins_earned FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1",
-        [student.studentId]
-      );
-      const previousXp = Number(statsBefore.rows[0]?.total_xp ?? 0);
-      const previousCoins = Number(statsBefore.rows[0]?.coins ?? 0);
-      const previousTotalCoinsEarned = Number(statsBefore.rows[0]?.total_coins_earned ?? 0);
-      const safeXpEarned = boostedXpEarned;
-      const coinRewards = getSessionCoinRewards(previousXp, safeXpEarned);
-      const totalCoinsEarned = coinRewards.totalCoins + overtimeBonusCoins;
+        const safeStartPage = Math.max(0, toSafeInt(start_page));
+        const safeEndPage = Math.max(0, toSafeInt(end_page));
+        const safeChaptersFinished = Math.max(0, toSafeInt(chapters_finished));
+        const safeDurationMinutes = Math.max(0, toSafeInt(duration_minutes));
+        const safeGoalMinutes =
+          goal_minutes == null ? safeDurationMinutes : Math.max(0, Math.floor(Number(goal_minutes)));
+        const overtimeMinutes = Math.max(0, safeDurationMinutes - safeGoalMinutes);
+        const overtimeBonusCoins = overtimeMinutes * OVERTIME_COIN_REWARD_PER_MINUTE;
 
-      const totalXp = previousXp + safeXpEarned;
-      const newLevel = Math.floor(totalXp / XP_PER_LEVEL) + 1;
-      const newCoins = previousCoins + totalCoinsEarned;
-      const newTotalCoinsEarned = previousTotalCoinsEarned + totalCoinsEarned;
+        const streakDays = await touchStudentStreak(db, student.studentId);
+        const streakMultiplier = getStreakXpMultiplier(streakDays);
+        const submittedXp = Math.max(0, toSafeInt(xp_earned));
+        const boostedXpEarned = Math.max(0, Math.round(submittedXp * streakMultiplier));
 
-      await query(
-        `
-          UPDATE user_stats
-          SET total_xp = $1, level = $2, coins = $3, total_coins_earned = $4
-          WHERE student_id = $5
-        `,
-        [totalXp, newLevel, newCoins, newTotalCoinsEarned, student.studentId]
-      );
+        const session = await db.query(
+          `INSERT INTO sessions
+           (book_id, student_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
+           RETURNING *`,
+          [book_id, student.studentId, safeStartPage, safeEndPage, safeChaptersFinished, safeDurationMinutes, boostedXpEarned]
+        );
 
-      return res.status(200).json({
-        session: session.rows[0],
-        total_xp: totalXp,
-        level: newLevel,
-        coins: newCoins,
-        xp_earned: safeXpEarned,
-        streak_days: streakDays,
-        streak_multiplier: streakMultiplier,
-        coins_earned: totalCoinsEarned,
-        milestone_bonus_coins: coinRewards.milestoneCoins,
-        overtime_bonus_coins: overtimeBonusCoins,
-        overtime_minutes: overtimeMinutes,
-        milestones_reached: coinRewards.milestonesCrossed,
+        const sessionId = toSafeInt(session.rows[0]?.id, NaN);
+        const reflectionEntries = parseReflectionEntries(questions, answers);
+        if (Number.isFinite(sessionId) && reflectionEntries.length > 0) {
+          for (const entry of reflectionEntries) {
+            await db.query(
+              `
+                INSERT INTO session_reflections
+                (session_id, student_id, book_id, question_index, question_text, answer_text)
+                VALUES ($1, $2, $3, $4, $5, $6)
+              `,
+              [
+                sessionId,
+                student.studentId,
+                book_id,
+                entry.question_index,
+                entry.question_text,
+                entry.answer_text,
+              ]
+            );
+          }
+        }
+
+        const clampedBookPage = totalBookPages > 0 ? Math.min(safeEndPage, totalBookPages) : safeEndPage;
+        await db.query("UPDATE books SET current_page = $1 WHERE id = $2 AND student_id = $3", [
+          clampedBookPage,
+          book_id,
+          student.studentId,
+        ]);
+
+        const crossedFinish = totalBookPages > 0 && previousBookPage < totalBookPages && safeEndPage >= totalBookPages;
+        const completion = crossedFinish
+          ? await tryRecordBookCompletion(db, student.studentId, Math.floor(Number(book_id)))
+          : null;
+
+        const unlockedAchievements: AchievementUnlock[] = [];
+        if (completion?.completion_number) {
+          const bookUnlock = await awardBookCompletionAchievement(db, student.studentId, completion.completion_number);
+          if (bookUnlock) {
+            unlockedAchievements.push(bookUnlock);
+          }
+        }
+
+        const thresholdAwarding = await awardThresholdAchievements(db, student.studentId);
+        if (thresholdAwarding.unlocks.length) {
+          unlockedAchievements.push(...thresholdAwarding.unlocks);
+        }
+
+        const achievementBonusXp = unlockedAchievements.reduce((sum, unlock) => sum + unlock.reward_xp, 0);
+        const achievementBonusCoins = unlockedAchievements.reduce((sum, unlock) => sum + unlock.reward_coins, 0);
+
+        const statsBefore = await db.query(
+          "SELECT total_xp, coins, total_coins_earned FROM user_stats WHERE student_id = $1 ORDER BY id ASC LIMIT 1",
+          [student.studentId]
+        );
+        const previousXp = toSafeInt(statsBefore.rows[0]?.total_xp, 0);
+        const previousCoins = toSafeInt(statsBefore.rows[0]?.coins, 0);
+        const previousTotalCoinsEarned = toSafeInt(statsBefore.rows[0]?.total_coins_earned, 0);
+        const safeXpEarned = boostedXpEarned;
+        const coinRewards = getSessionCoinRewards(previousXp, safeXpEarned);
+        const sessionCoinsEarned = coinRewards.totalCoins + overtimeBonusCoins;
+        const totalCoinsEarned = sessionCoinsEarned + achievementBonusCoins;
+
+        const totalXp = previousXp + safeXpEarned + achievementBonusXp;
+        const newLevel = Math.floor(totalXp / XP_PER_LEVEL) + 1;
+        const newCoins = previousCoins + totalCoinsEarned;
+        const newTotalCoinsEarned = previousTotalCoinsEarned + totalCoinsEarned;
+
+        await db.query(
+          `
+            UPDATE user_stats
+            SET total_xp = $1, level = $2, coins = $3, total_coins_earned = $4
+            WHERE student_id = $5
+          `,
+          [totalXp, newLevel, newCoins, newTotalCoinsEarned, student.studentId]
+        );
+
+        return {
+          session: session.rows[0],
+          total_xp: totalXp,
+          level: newLevel,
+          coins: newCoins,
+          xp_earned: safeXpEarned,
+          streak_days: streakDays,
+          streak_multiplier: streakMultiplier,
+          coins_earned: sessionCoinsEarned,
+          milestone_bonus_coins: coinRewards.milestoneCoins,
+          overtime_bonus_coins: overtimeBonusCoins,
+          overtime_minutes: overtimeMinutes,
+          milestones_reached: coinRewards.milestonesCrossed,
+          achievement_bonus_xp: achievementBonusXp,
+          achievement_bonus_coins: achievementBonusCoins,
+          achievements_unlocked: unlockedAchievements,
+          book_completion: completion
+            ? {
+                book_id: toSafeInt(book_id),
+                title: String(bookRow.title ?? "Completed Book"),
+                total_pages: totalBookPages,
+                completion_number: completion.completion_number,
+                completed_at: completion.completed_at,
+                sticker_key: null,
+                rating_key: null,
+                sticker_pos_x: null,
+                sticker_pos_y: null,
+              }
+            : null,
+        };
       });
+
+      return res.status(200).json(sessionPayload);
     }
 
     if (req.method === "GET") {
@@ -253,7 +341,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     return res.status(405).json({ error: "Method not allowed" });
   } catch (err: any) {
+    if (String(err?.message ?? "") === "BOOK_NOT_FOUND") {
+      return res.status(404).json({ error: "Book not found for this student" });
+    }
+
     console.error(err);
-    res.status(500).json({ error: String(err?.message ?? err) });
+    return res.status(500).json({ error: String(err?.message ?? err) });
   }
 }

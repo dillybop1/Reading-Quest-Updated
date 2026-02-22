@@ -68,6 +68,34 @@ db.exec(`
     FOREIGN KEY(book_id) REFERENCES books(id)
   );
 
+  CREATE TABLE IF NOT EXISTS achievement_unlocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER,
+    achievement_key TEXT NOT NULL,
+    period_key TEXT NOT NULL DEFAULT 'lifetime',
+    awarded_xp INTEGER DEFAULT 0,
+    awarded_coins INTEGER DEFAULT 0,
+    unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(student_id, achievement_key, period_key),
+    FOREIGN KEY(student_id) REFERENCES students(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS student_book_completions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    student_id INTEGER,
+    book_id INTEGER,
+    completion_number INTEGER NOT NULL,
+    sticker_key TEXT,
+    rating_key TEXT,
+    sticker_pos_x REAL,
+    sticker_pos_y REAL,
+    completed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(student_id, book_id),
+    UNIQUE(student_id, completion_number),
+    FOREIGN KEY(student_id) REFERENCES students(id),
+    FOREIGN KEY(book_id) REFERENCES books(id)
+  );
+
   CREATE TABLE IF NOT EXISTS student_room_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     student_id INTEGER,
@@ -113,6 +141,20 @@ ensureColumn("session_reflections", "question_index", "INTEGER");
 ensureColumn("session_reflections", "question_text", "TEXT");
 ensureColumn("session_reflections", "answer_text", "TEXT");
 ensureColumn("session_reflections", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+ensureColumn("achievement_unlocks", "student_id", "INTEGER");
+ensureColumn("achievement_unlocks", "achievement_key", "TEXT");
+ensureColumn("achievement_unlocks", "period_key", "TEXT DEFAULT 'lifetime'");
+ensureColumn("achievement_unlocks", "awarded_xp", "INTEGER DEFAULT 0");
+ensureColumn("achievement_unlocks", "awarded_coins", "INTEGER DEFAULT 0");
+ensureColumn("achievement_unlocks", "unlocked_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+ensureColumn("student_book_completions", "student_id", "INTEGER");
+ensureColumn("student_book_completions", "book_id", "INTEGER");
+ensureColumn("student_book_completions", "completion_number", "INTEGER");
+ensureColumn("student_book_completions", "sticker_key", "TEXT");
+ensureColumn("student_book_completions", "rating_key", "TEXT");
+ensureColumn("student_book_completions", "sticker_pos_x", "REAL");
+ensureColumn("student_book_completions", "sticker_pos_y", "REAL");
+ensureColumn("student_book_completions", "completed_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
 ensureColumn("student_room_items", "student_id", "INTEGER");
 ensureColumn("student_room_items", "item_key", "TEXT");
 ensureColumn("student_room_items", "is_equipped", "INTEGER DEFAULT 0");
@@ -124,11 +166,21 @@ ensureColumn("student_room_items", "created_at", "DATETIME DEFAULT CURRENT_TIMES
 db.exec(`
   CREATE UNIQUE INDEX IF NOT EXISTS idx_students_class_nickname ON students(class_code, nickname);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_user_stats_student_id ON user_stats(student_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_achievement_unlocks_student_key_period
+  ON achievement_unlocks(student_id, achievement_key, period_key);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_student_book_completions_student_book
+  ON student_book_completions(student_id, book_id);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_student_book_completions_student_completion
+  ON student_book_completions(student_id, completion_number);
   CREATE INDEX IF NOT EXISTS idx_books_student_id ON books(student_id);
   CREATE INDEX IF NOT EXISTS idx_books_student_active ON books(student_id, is_active);
   CREATE INDEX IF NOT EXISTS idx_sessions_student_id ON sessions(student_id);
   CREATE INDEX IF NOT EXISTS idx_reflections_student_id ON session_reflections(student_id);
   CREATE INDEX IF NOT EXISTS idx_reflections_session_id ON session_reflections(session_id);
+  CREATE INDEX IF NOT EXISTS idx_achievement_unlocks_student_unlocked_at
+  ON achievement_unlocks(student_id, unlocked_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_student_book_completions_student_completed_at
+  ON student_book_completions(student_id, completed_at DESC);
   CREATE INDEX IF NOT EXISTS idx_room_items_student_id ON student_room_items(student_id);
 `);
 
@@ -143,6 +195,17 @@ const ROOM_Z_INDEX_MAX = 999;
 const CLASS_CODE_REGEX = /^[A-Z0-9-]{2,20}$/;
 const NICKNAME_REGEX = /^[A-Za-z0-9 _.-]{2,24}$/;
 const ADMIN_ACCESS_CODE = (process.env.ADMIN_ACCESS_CODE || process.env.ADMIN_KEY || "Umphress1997!").trim();
+const BOOK_COMPLETION_STICKER_KEYS = new Set([
+  "dragon",
+  "rocket",
+  "crown",
+  "owl",
+  "lightning",
+  "mountain",
+  "bookworm",
+  "shield",
+]);
+const BOOK_COMPLETION_RATING_KEYS = new Set(["loved_it", "good_read", "hard_for_me"]);
 
 type RoomItemDefinition = {
   key: string;
@@ -442,10 +505,365 @@ type SessionPayload = {
   end_page: number;
   chapters_finished: number;
   duration_minutes: number;
+  goal_minutes?: number;
   xp_earned: number;
   questions?: string[];
   answers?: string[];
 };
+
+type AchievementMetric =
+  | "total_sessions"
+  | "total_pages"
+  | "total_minutes"
+  | "streak_days"
+  | "reflection_sessions"
+  | "weekly_sessions"
+  | "weekly_pages"
+  | "weekly_minutes";
+
+type ThresholdAchievementDefinition = {
+  key: string;
+  title: string;
+  description: string;
+  target: number;
+  reward_xp: number;
+  reward_coins: number;
+  metric: AchievementMetric;
+  is_repeatable: boolean;
+  period_mode: "lifetime" | "weekly" | "session_block_10_after_30";
+};
+
+type BookMilestoneAchievementDefinition = {
+  key: string;
+  title: string;
+  description: string;
+  target: number;
+  reward_xp: number;
+  reward_coins: number;
+  is_repeatable: false;
+  period_mode: "lifetime";
+};
+
+type BookRepeatAchievementDefinition = {
+  key: "book_complete_repeat";
+  title: string;
+  description: string;
+  reward_xp: number;
+  reward_coins: number;
+  is_repeatable: true;
+  period_mode: "per_completion";
+};
+
+type AchievementSnapshot = {
+  total_sessions: number;
+  total_pages: number;
+  total_minutes: number;
+  streak_days: number;
+  reflection_sessions: number;
+  weekly_sessions: number;
+  weekly_pages: number;
+  weekly_minutes: number;
+  completed_books_count: number;
+};
+
+type AchievementUnlock = {
+  key: string;
+  title: string;
+  description: string;
+  reward_xp: number;
+  reward_coins: number;
+  period_key: string;
+  unlocked_at: string;
+  is_repeatable: boolean;
+};
+
+type AchievementChecklistItem = {
+  key: string;
+  title: string;
+  description: string;
+  reward_xp: number;
+  reward_coins: number;
+  target: number | null;
+  progress: number;
+  is_unlocked: boolean;
+  is_repeatable: boolean;
+  times_earned: number;
+  current_period_key: string | null;
+};
+
+const BOOK_COMPLETION_REWARDS = [
+  { reward_xp: 150, reward_coins: 120 },
+  { reward_xp: 225, reward_coins: 180 },
+  { reward_xp: 300, reward_coins: 240 },
+  { reward_xp: 375, reward_coins: 300 },
+  { reward_xp: 450, reward_coins: 360 },
+];
+
+const BOOK_MILESTONE_ACHIEVEMENTS: BookMilestoneAchievementDefinition[] = [
+  {
+    key: "book_complete_1",
+    title: "First Book Complete",
+    description: "Finish your first full book.",
+    target: 1,
+    reward_xp: BOOK_COMPLETION_REWARDS[0].reward_xp,
+    reward_coins: BOOK_COMPLETION_REWARDS[0].reward_coins,
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "book_complete_2",
+    title: "Second Book Complete",
+    description: "Finish two books in total.",
+    target: 2,
+    reward_xp: BOOK_COMPLETION_REWARDS[1].reward_xp,
+    reward_coins: BOOK_COMPLETION_REWARDS[1].reward_coins,
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "book_complete_3",
+    title: "Third Book Complete",
+    description: "Finish three books in total.",
+    target: 3,
+    reward_xp: BOOK_COMPLETION_REWARDS[2].reward_xp,
+    reward_coins: BOOK_COMPLETION_REWARDS[2].reward_coins,
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "book_complete_4",
+    title: "Fourth Book Complete",
+    description: "Finish four books in total.",
+    target: 4,
+    reward_xp: BOOK_COMPLETION_REWARDS[3].reward_xp,
+    reward_coins: BOOK_COMPLETION_REWARDS[3].reward_coins,
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "book_complete_5",
+    title: "Fifth Book Complete",
+    description: "Finish five books in total.",
+    target: 5,
+    reward_xp: BOOK_COMPLETION_REWARDS[4].reward_xp,
+    reward_coins: BOOK_COMPLETION_REWARDS[4].reward_coins,
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+];
+
+const BOOK_REPEAT_ACHIEVEMENT: BookRepeatAchievementDefinition = {
+  key: "book_complete_repeat",
+  title: "Book Champion",
+  description: "After book five, every additional completed book repeats this reward.",
+  reward_xp: BOOK_COMPLETION_REWARDS[4].reward_xp,
+  reward_coins: BOOK_COMPLETION_REWARDS[4].reward_coins,
+  is_repeatable: true,
+  period_mode: "per_completion",
+};
+
+const THRESHOLD_ACHIEVEMENTS: ThresholdAchievementDefinition[] = [
+  {
+    key: "first_session",
+    title: "First Quest",
+    description: "Complete your first reading session.",
+    target: 1,
+    reward_xp: 20,
+    reward_coins: 15,
+    metric: "total_sessions",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "session_5",
+    title: "Quest Runner",
+    description: "Complete 5 reading sessions.",
+    target: 5,
+    reward_xp: 40,
+    reward_coins: 25,
+    metric: "total_sessions",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "session_10",
+    title: "Quest Veteran",
+    description: "Complete 10 reading sessions.",
+    target: 10,
+    reward_xp: 75,
+    reward_coins: 50,
+    metric: "total_sessions",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "session_30",
+    title: "Quest Champion",
+    description: "Complete 30 reading sessions.",
+    target: 30,
+    reward_xp: 180,
+    reward_coins: 130,
+    metric: "total_sessions",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "session_repeat_10",
+    title: "Champion Encore",
+    description: "After 30 sessions, every 10 more sessions grants this reward.",
+    target: 10,
+    reward_xp: 90,
+    reward_coins: 70,
+    metric: "total_sessions",
+    is_repeatable: true,
+    period_mode: "session_block_10_after_30",
+  },
+  {
+    key: "pages_100",
+    title: "Page Turner",
+    description: "Read 100 total pages.",
+    target: 100,
+    reward_xp: 60,
+    reward_coins: 40,
+    metric: "total_pages",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "pages_500",
+    title: "Page Explorer",
+    description: "Read 500 total pages.",
+    target: 500,
+    reward_xp: 120,
+    reward_coins: 90,
+    metric: "total_pages",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "pages_1000",
+    title: "Page Master",
+    description: "Read 1000 total pages.",
+    target: 1000,
+    reward_xp: 180,
+    reward_coins: 140,
+    metric: "total_pages",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "streak_3",
+    title: "Streak Starter",
+    description: "Reach a 3-day reading streak.",
+    target: 3,
+    reward_xp: 50,
+    reward_coins: 35,
+    metric: "streak_days",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "streak_7",
+    title: "Streak Hero",
+    description: "Reach a 7-day reading streak.",
+    target: 7,
+    reward_xp: 100,
+    reward_coins: 75,
+    metric: "streak_days",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "minutes_120",
+    title: "Time Starter",
+    description: "Read for 120 total minutes.",
+    target: 120,
+    reward_xp: 45,
+    reward_coins: 30,
+    metric: "total_minutes",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "minutes_300",
+    title: "Time Keeper",
+    description: "Read for 300 total minutes.",
+    target: 300,
+    reward_xp: 80,
+    reward_coins: 55,
+    metric: "total_minutes",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "minutes_900",
+    title: "Time Master",
+    description: "Read for 900 total minutes.",
+    target: 900,
+    reward_xp: 170,
+    reward_coins: 120,
+    metric: "total_minutes",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "reflection_10",
+    title: "Thoughtful Reader",
+    description: "Submit reflections for 10 sessions.",
+    target: 10,
+    reward_xp: 90,
+    reward_coins: 60,
+    metric: "reflection_sessions",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "reflection_50",
+    title: "Reflection Sage",
+    description: "Submit reflections for 50 sessions.",
+    target: 50,
+    reward_xp: 220,
+    reward_coins: 160,
+    metric: "reflection_sessions",
+    is_repeatable: false,
+    period_mode: "lifetime",
+  },
+  {
+    key: "weekly_sessions_4",
+    title: "Weekly Quest x4",
+    description: "Complete 4 reading sessions this week.",
+    target: 4,
+    reward_xp: 50,
+    reward_coins: 35,
+    metric: "weekly_sessions",
+    is_repeatable: true,
+    period_mode: "weekly",
+  },
+  {
+    key: "weekly_pages_90",
+    title: "Weekly 90 Pages",
+    description: "Read 90 pages this week.",
+    target: 90,
+    reward_xp: 60,
+    reward_coins: 45,
+    metric: "weekly_pages",
+    is_repeatable: true,
+    period_mode: "weekly",
+  },
+  {
+    key: "weekly_minutes_180",
+    title: "Weekly 180 Minutes",
+    description: "Read 180 minutes this week.",
+    target: 180,
+    reward_xp: 60,
+    reward_coins: 45,
+    metric: "weekly_minutes",
+    is_repeatable: true,
+    period_mode: "weekly",
+  },
+];
+
+const CHECKLIST_ORDER = [...BOOK_MILESTONE_ACHIEVEMENTS, BOOK_REPEAT_ACHIEVEMENT, ...THRESHOLD_ACHIEVEMENTS];
 
 const getStringValue = (value: unknown) => {
   if (typeof value === "string") return value;
@@ -597,6 +1015,367 @@ const touchStudentStreak = (studentId: number) => {
   return next.streakDays;
 };
 
+const toSafeInt = (value: unknown, fallback = 0) => {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.floor(parsed) : fallback;
+};
+
+const ONE_WEEK_MS = 7 * ONE_DAY_MS;
+const getWeekPeriodKey = (date = new Date()) => {
+  const target = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const day = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - day + 3);
+
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const firstDay = (firstThursday.getUTCDay() + 6) % 7;
+  firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDay + 3);
+
+  const weekNumber = 1 + Math.round((target.getTime() - firstThursday.getTime()) / ONE_WEEK_MS);
+  return `${target.getUTCFullYear()}-W${String(weekNumber).padStart(2, "0")}`;
+};
+
+const buildUnlockPayload = (
+  definition: {
+    key: string;
+    title: string;
+    description: string;
+    reward_xp: number;
+    reward_coins: number;
+    is_repeatable: boolean;
+  },
+  periodKey: string,
+  unlockedAt: string,
+  rewardXp?: number,
+  rewardCoins?: number
+): AchievementUnlock => ({
+  key: definition.key,
+  title: definition.title,
+  description: definition.description,
+  reward_xp: Number.isFinite(rewardXp) ? Math.max(0, Math.floor(Number(rewardXp))) : definition.reward_xp,
+  reward_coins: Number.isFinite(rewardCoins) ? Math.max(0, Math.floor(Number(rewardCoins))) : definition.reward_coins,
+  period_key: periodKey,
+  unlocked_at: unlockedAt,
+  is_repeatable: definition.is_repeatable,
+});
+
+const getBookCompletionReward = (completionNumber: number) => {
+  const safeCompletion = Math.max(1, Math.floor(completionNumber || 1));
+  const rewardIndex = Math.min(BOOK_COMPLETION_REWARDS.length, safeCompletion) - 1;
+  return BOOK_COMPLETION_REWARDS[rewardIndex];
+};
+
+const loadAchievementSnapshot = (studentId: number, currentPeriodKey: string): AchievementSnapshot => {
+  const sessions = db
+    .prepare("SELECT start_page, end_page, duration_minutes, timestamp FROM sessions WHERE student_id = ?")
+    .all(studentId) as Array<{
+    start_page?: number | null;
+    end_page?: number | null;
+    duration_minutes?: number | null;
+    timestamp?: string | null;
+  }>;
+
+  let totalPages = 0;
+  let totalMinutes = 0;
+  let weeklySessions = 0;
+  let weeklyPages = 0;
+  let weeklyMinutes = 0;
+
+  for (const session of sessions) {
+    const startPage = toSafeInt(session.start_page, 0);
+    const endPage = toSafeInt(session.end_page, 0);
+    const duration = Math.max(0, toSafeInt(session.duration_minutes, 0));
+    const pagesRead = Math.max(0, endPage - startPage);
+
+    totalPages += pagesRead;
+    totalMinutes += duration;
+
+    const parsedDate = session.timestamp ? new Date(session.timestamp) : null;
+    if (!parsedDate || Number.isNaN(parsedDate.getTime())) continue;
+
+    if (getWeekPeriodKey(parsedDate) === currentPeriodKey) {
+      weeklySessions += 1;
+      weeklyPages += pagesRead;
+      weeklyMinutes += duration;
+    }
+  }
+
+  const streakStats =
+    (db
+      .prepare("SELECT COALESCE(streak_days, 1) AS streak_days FROM user_stats WHERE student_id = ? LIMIT 1")
+      .get(studentId) as { streak_days?: number } | undefined) ?? {};
+
+  const reflectionStats =
+    (db
+      .prepare("SELECT COUNT(DISTINCT session_id) AS reflection_sessions FROM session_reflections WHERE student_id = ?")
+      .get(studentId) as { reflection_sessions?: number } | undefined) ?? {};
+
+  const completionStats =
+    (db
+      .prepare("SELECT COUNT(*) AS completed_books_count FROM student_book_completions WHERE student_id = ?")
+      .get(studentId) as { completed_books_count?: number } | undefined) ?? {};
+
+  return {
+    total_sessions: sessions.length,
+    total_pages: totalPages,
+    total_minutes: totalMinutes,
+    streak_days: Math.max(1, toSafeInt(streakStats.streak_days, 1)),
+    reflection_sessions: Math.max(0, toSafeInt(reflectionStats.reflection_sessions, 0)),
+    weekly_sessions: weeklySessions,
+    weekly_pages: weeklyPages,
+    weekly_minutes: weeklyMinutes,
+    completed_books_count: Math.max(0, toSafeInt(completionStats.completed_books_count, 0)),
+  };
+};
+
+const getMetricValue = (snapshot: AchievementSnapshot, metric: AchievementMetric) => Math.max(0, snapshot[metric] ?? 0);
+
+const awardThresholdAchievements = (studentId: number) => {
+  const currentPeriodKey = getWeekPeriodKey();
+  const snapshot = loadAchievementSnapshot(studentId, currentPeriodKey);
+  const unlocks: AchievementUnlock[] = [];
+
+  for (const definition of THRESHOLD_ACHIEVEMENTS) {
+    const metricValue = getMetricValue(snapshot, definition.metric);
+    if (definition.period_mode === "session_block_10_after_30") {
+      const sessionsBeyondThirty = Math.max(0, metricValue - 30);
+      const completedBlocks = Math.floor(sessionsBeyondThirty / Math.max(1, definition.target));
+      for (let block = 1; block <= completedBlocks; block += 1) {
+        const periodKey = `session_block_${block}`;
+        const unlockedAt = new Date().toISOString();
+        const inserted = db
+          .prepare(
+            `
+              INSERT OR IGNORE INTO achievement_unlocks
+              (student_id, achievement_key, period_key, awarded_xp, awarded_coins, unlocked_at)
+              VALUES (?, ?, ?, ?, ?, ?)
+            `
+          )
+          .run(studentId, definition.key, periodKey, definition.reward_xp, definition.reward_coins, unlockedAt);
+
+        if (!inserted.changes) continue;
+        unlocks.push(buildUnlockPayload(definition, periodKey, unlockedAt));
+      }
+      continue;
+    }
+
+    if (metricValue < definition.target) continue;
+
+    const periodKey = definition.period_mode === "weekly" ? currentPeriodKey : "lifetime";
+    const unlockedAt = new Date().toISOString();
+    const inserted = db
+      .prepare(
+        `
+          INSERT OR IGNORE INTO achievement_unlocks
+          (student_id, achievement_key, period_key, awarded_xp, awarded_coins, unlocked_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `
+      )
+      .run(studentId, definition.key, periodKey, definition.reward_xp, definition.reward_coins, unlockedAt);
+
+    if (!inserted.changes) continue;
+    unlocks.push(buildUnlockPayload(definition, periodKey, unlockedAt));
+  }
+
+  return unlocks;
+};
+
+const awardBookCompletionAchievement = (studentId: number, completionNumber: number) => {
+  const safeCompletion = Math.max(1, Math.floor(completionNumber || 1));
+  const reward = getBookCompletionReward(safeCompletion);
+  const definition =
+    safeCompletion <= BOOK_MILESTONE_ACHIEVEMENTS.length
+      ? BOOK_MILESTONE_ACHIEVEMENTS[safeCompletion - 1]
+      : BOOK_REPEAT_ACHIEVEMENT;
+  const periodKey = safeCompletion <= BOOK_MILESTONE_ACHIEVEMENTS.length ? "lifetime" : `completion_${safeCompletion}`;
+  const unlockedAt = new Date().toISOString();
+  const inserted = db
+    .prepare(
+      `
+        INSERT OR IGNORE INTO achievement_unlocks
+        (student_id, achievement_key, period_key, awarded_xp, awarded_coins, unlocked_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `
+    )
+    .run(studentId, definition.key, periodKey, reward.reward_xp, reward.reward_coins, unlockedAt);
+
+  if (!inserted.changes) return null;
+  return buildUnlockPayload(definition, periodKey, unlockedAt, reward.reward_xp, reward.reward_coins);
+};
+
+const tryRecordBookCompletion = (studentId: number, bookId: number) => {
+  const nextCompletion =
+    (db
+      .prepare("SELECT COALESCE(MAX(completion_number), 0) + 1 AS completion_number FROM student_book_completions WHERE student_id = ?")
+      .get(studentId) as { completion_number?: number } | undefined) ?? {};
+  const completionNumber = Math.max(1, toSafeInt(nextCompletion.completion_number, 1));
+  const completedAt = new Date().toISOString();
+  const inserted = db
+    .prepare(
+      `
+        INSERT OR IGNORE INTO student_book_completions
+        (student_id, book_id, completion_number, completed_at)
+        VALUES (?, ?, ?, ?)
+      `
+    )
+    .run(studentId, bookId, completionNumber, completedAt);
+
+  if (!inserted.changes) return null;
+  return { completion_number: completionNumber, completed_at: completedAt };
+};
+
+const buildAchievementsResponse = (studentId: number) => {
+  const currentPeriodKey = getWeekPeriodKey();
+  const snapshot = loadAchievementSnapshot(studentId, currentPeriodKey);
+  const unlockRows = db
+    .prepare(
+      `
+        SELECT achievement_key, period_key, unlocked_at, awarded_xp, awarded_coins
+        FROM achievement_unlocks
+        WHERE student_id = ?
+        ORDER BY unlocked_at DESC
+      `
+    )
+    .all(studentId) as Array<{
+    achievement_key: string;
+    period_key: string;
+    unlocked_at: string;
+    awarded_xp: number;
+    awarded_coins: number;
+  }>;
+
+  const timesEarnedByKey = new Map<string, number>();
+  const unlockSet = new Set<string>();
+  for (const unlock of unlockRows) {
+    const key = String(unlock.achievement_key ?? "");
+    const periodKey = String(unlock.period_key ?? "");
+    if (!key) continue;
+    timesEarnedByKey.set(key, (timesEarnedByKey.get(key) ?? 0) + 1);
+    unlockSet.add(`${key}::${periodKey}`);
+  }
+
+  const definitionByKey = new Map(CHECKLIST_ORDER.map((definition) => [definition.key, definition] as const));
+
+  const achievements: AchievementChecklistItem[] = CHECKLIST_ORDER.map((definition) => {
+    if ("metric" in definition) {
+      const metricValue = getMetricValue(snapshot, definition.metric);
+      if (definition.period_mode === "session_block_10_after_30") {
+        const sessionsBeyondThirty = Math.max(0, metricValue - 30);
+        const progress = Math.max(0, sessionsBeyondThirty % Math.max(1, definition.target));
+        const nextBlock = Math.floor(sessionsBeyondThirty / Math.max(1, definition.target)) + 1;
+        return {
+          key: definition.key,
+          title: definition.title,
+          description: definition.description,
+          reward_xp: definition.reward_xp,
+          reward_coins: definition.reward_coins,
+          target: definition.target,
+          progress,
+          is_unlocked: (timesEarnedByKey.get(definition.key) ?? 0) > 0,
+          is_repeatable: definition.is_repeatable,
+          times_earned: timesEarnedByKey.get(definition.key) ?? 0,
+          current_period_key: `session_block_${nextBlock}`,
+        };
+      }
+
+      const progress = Math.max(0, Math.min(metricValue, definition.target));
+      const isUnlocked =
+        definition.period_mode === "weekly"
+          ? unlockSet.has(`${definition.key}::${currentPeriodKey}`)
+          : (timesEarnedByKey.get(definition.key) ?? 0) > 0;
+      return {
+        key: definition.key,
+        title: definition.title,
+        description: definition.description,
+        reward_xp: definition.reward_xp,
+        reward_coins: definition.reward_coins,
+        target: definition.target,
+        progress,
+        is_unlocked: isUnlocked,
+        is_repeatable: definition.is_repeatable,
+        times_earned: timesEarnedByKey.get(definition.key) ?? 0,
+        current_period_key: definition.period_mode === "weekly" ? currentPeriodKey : null,
+      };
+    }
+
+    if (definition.key === "book_complete_repeat") {
+      const repeatCount = Math.max(0, snapshot.completed_books_count - BOOK_MILESTONE_ACHIEVEMENTS.length);
+      return {
+        key: definition.key,
+        title: definition.title,
+        description: definition.description,
+        reward_xp: definition.reward_xp,
+        reward_coins: definition.reward_coins,
+        target: null,
+        progress: repeatCount,
+        is_unlocked: repeatCount > 0,
+        is_repeatable: definition.is_repeatable,
+        times_earned: timesEarnedByKey.get(definition.key) ?? 0,
+        current_period_key: null,
+      };
+    }
+
+    if ("target" in definition) {
+      const target = definition.target;
+      const progress = Math.max(0, Math.min(snapshot.completed_books_count, target));
+      return {
+        key: definition.key,
+        title: definition.title,
+        description: definition.description,
+        reward_xp: definition.reward_xp,
+        reward_coins: definition.reward_coins,
+        target,
+        progress,
+        is_unlocked: (timesEarnedByKey.get(definition.key) ?? 0) > 0,
+        is_repeatable: definition.is_repeatable,
+        times_earned: timesEarnedByKey.get(definition.key) ?? 0,
+        current_period_key: null,
+      };
+    }
+
+    return {
+      key: definition.key,
+      title: definition.title,
+      description: definition.description,
+      reward_xp: definition.reward_xp,
+      reward_coins: definition.reward_coins,
+      target: null,
+      progress: 0,
+      is_unlocked: (timesEarnedByKey.get(definition.key) ?? 0) > 0,
+      is_repeatable: definition.is_repeatable,
+      times_earned: timesEarnedByKey.get(definition.key) ?? 0,
+      current_period_key: null,
+    };
+  });
+
+  const recentUnlocks: AchievementUnlock[] = unlockRows.slice(0, 10).map((row) => {
+    const key = String(row.achievement_key ?? "");
+    const periodKey = String(row.period_key ?? "lifetime");
+    const definition = definitionByKey.get(key);
+    if (definition) {
+      return buildUnlockPayload(definition, periodKey, String(row.unlocked_at ?? new Date().toISOString()), row.awarded_xp, row.awarded_coins);
+    }
+    return {
+      key,
+      title: key,
+      description: "",
+      reward_xp: Math.max(0, toSafeInt(row.awarded_xp, 0)),
+      reward_coins: Math.max(0, toSafeInt(row.awarded_coins, 0)),
+      period_key: periodKey,
+      unlocked_at: String(row.unlocked_at ?? new Date().toISOString()),
+      is_repeatable: false,
+    };
+  });
+
+  return {
+    current_period_key: currentPeriodKey,
+    completed_books_count: snapshot.completed_books_count,
+    unlocked_total: unlockRows.length,
+    total_available: CHECKLIST_ORDER.length,
+    achievements,
+    recent_unlocks: recentUnlocks,
+  };
+};
+
 const buildRoomState = (studentId: number) => {
   const stats =
     (db
@@ -734,7 +1513,8 @@ const resolveStudent = (req: express.Request, res: express.Response): StudentIde
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const configuredPort = Number.parseInt(String(process.env.PORT ?? "3000"), 10);
+  const PORT = Number.isFinite(configuredPort) && configuredPort > 0 ? configuredPort : 3000;
 
   app.use(express.json());
 
@@ -757,7 +1537,7 @@ async function startServer() {
       .prepare("SELECT COALESCE(SUM(duration_minutes), 0) as total FROM sessions WHERE student_id = ?")
       .get(student.studentId) as { total: number };
     const totalBooks = db
-      .prepare("SELECT COUNT(*) as count FROM books WHERE student_id = ?")
+      .prepare("SELECT COUNT(*) as count FROM student_book_completions WHERE student_id = ?")
       .get(student.studentId) as { count: number };
 
     res.json({
@@ -770,12 +1550,120 @@ async function startServer() {
     });
   });
 
+  app.get("/api/achievements", (req, res) => {
+    const student = resolveStudent(req, res);
+    if (!student) return;
+
+    return res.json(buildAchievementsResponse(student.studentId));
+  });
+
   app.get("/api/books", (req, res) => {
     const student = resolveStudent(req, res);
     if (!student) return;
 
-    const books = db.prepare("SELECT * FROM books WHERE student_id = ? ORDER BY id DESC").all(student.studentId);
+    const books = db
+      .prepare(
+        `
+          SELECT *
+          FROM books
+          WHERE student_id = ?
+            AND (COALESCE(total_pages, 0) <= 0 OR COALESCE(current_page, 0) < COALESCE(total_pages, 0))
+          ORDER BY id DESC
+        `
+      )
+      .all(student.studentId);
     res.json(books);
+  });
+
+  app.get("/api/books/completed", (req, res) => {
+    const student = resolveStudent(req, res);
+    if (!student) return;
+
+    const completedBooks = db
+      .prepare(
+        `
+          SELECT
+            b.id as book_id,
+            b.title,
+            b.author,
+            COALESCE(b.total_pages, 0) as total_pages,
+            sbc.completion_number,
+            sbc.sticker_key,
+            sbc.rating_key,
+            sbc.sticker_pos_x,
+            sbc.sticker_pos_y,
+            sbc.completed_at
+          FROM student_book_completions sbc
+          JOIN books b ON b.id = sbc.book_id
+          WHERE sbc.student_id = ?
+          ORDER BY sbc.completion_number DESC, sbc.completed_at DESC
+        `
+      )
+      .all(student.studentId);
+
+    return res.json(completedBooks);
+  });
+
+  app.patch("/api/books/completed", (req, res) => {
+    const student = resolveStudent(req, res);
+    if (!student) return;
+
+    const completionNumber = toPositiveInt(req.body?.completion_number);
+    if (!completionNumber) {
+      return res.status(400).json({ error: "Invalid completion_number" });
+    }
+
+    const stickerKeyRaw = getStringValue(req.body?.sticker_key).trim();
+    const ratingKeyRaw = getStringValue(req.body?.rating_key).trim();
+    const stickerPosXRaw = req.body?.sticker_pos_x;
+    const stickerPosYRaw = req.body?.sticker_pos_y;
+    const stickerKey = stickerKeyRaw || null;
+    const ratingKey = ratingKeyRaw || null;
+    const stickerPosX = stickerPosXRaw == null ? null : Number(stickerPosXRaw);
+    const stickerPosY = stickerPosYRaw == null ? null : Number(stickerPosYRaw);
+
+    if (stickerKey && !BOOK_COMPLETION_STICKER_KEYS.has(stickerKey)) {
+      return res.status(400).json({ error: "Invalid sticker_key" });
+    }
+
+    if (ratingKey && !BOOK_COMPLETION_RATING_KEYS.has(ratingKey)) {
+      return res.status(400).json({ error: "Invalid rating_key" });
+    }
+
+    if (stickerPosX != null && (!Number.isFinite(stickerPosX) || stickerPosX < 0 || stickerPosX > 100)) {
+      return res.status(400).json({ error: "Invalid sticker_pos_x" });
+    }
+
+    if (stickerPosY != null && (!Number.isFinite(stickerPosY) || stickerPosY < 0 || stickerPosY > 100)) {
+      return res.status(400).json({ error: "Invalid sticker_pos_y" });
+    }
+
+    const updateResult = db
+      .prepare(
+        `
+          UPDATE student_book_completions
+          SET sticker_key = ?, rating_key = ?, sticker_pos_x = ?, sticker_pos_y = ?
+          WHERE student_id = ? AND completion_number = ?
+        `
+      )
+      .run(stickerKey, ratingKey, stickerPosX, stickerPosY, student.studentId, completionNumber);
+
+    if (!updateResult.changes) {
+      return res.status(404).json({ error: "Completion record not found" });
+    }
+
+    const updated = db
+      .prepare(
+        `
+          SELECT completion_number, sticker_key, rating_key, sticker_pos_x, sticker_pos_y
+          FROM student_book_completions
+          WHERE student_id = ? AND completion_number = ?
+          LIMIT 1
+        `
+      )
+      .get(student.studentId, completionNumber);
+
+    return res.json(updated);
   });
 
   app.get("/api/books/active", (req, res) => {
@@ -839,6 +1727,29 @@ async function startServer() {
   });
 
   const runSessionTransaction = db.transaction((payload: SessionPayload, studentId: number) => {
+    const safeStartPage = Math.max(0, toSafeInt(payload.start_page, 0));
+    const safeEndPage = Math.max(0, toSafeInt(payload.end_page, 0));
+    const safeChaptersFinished = Math.max(0, toSafeInt(payload.chapters_finished, 0));
+    const safeDurationMinutes = Math.max(0, toSafeInt(payload.duration_minutes, 0));
+    const safeGoalMinutes =
+      payload.goal_minutes == null ? safeDurationMinutes : Math.max(0, toSafeInt(payload.goal_minutes, safeDurationMinutes));
+    const overtimeMinutes = Math.max(0, safeDurationMinutes - safeGoalMinutes);
+    const overtimeBonusCoins = overtimeMinutes * 3;
+
+    const bookRow = db
+      .prepare("SELECT id, title, current_page, total_pages FROM books WHERE id = ? AND student_id = ? LIMIT 1")
+      .get(payload.book_id, studentId) as
+      | { id?: number; title?: string; current_page?: number; total_pages?: number }
+      | undefined;
+    if (!bookRow?.id) {
+      throw new Error("BOOK_NOT_FOUND");
+    }
+
+    const previousBookPage = Math.max(0, toSafeInt(bookRow.current_page, 0));
+    const totalBookPages = Math.max(0, toSafeInt(bookRow.total_pages, 0));
+    const crossedFinish = totalBookPages > 0 && previousBookPage < totalBookPages && safeEndPage >= totalBookPages;
+    const clampedBookPage = totalBookPages > 0 ? Math.min(safeEndPage, totalBookPages) : safeEndPage;
+
     const streakDays = touchStudentStreak(studentId);
     const streakMultiplier = getStreakXpMultiplier(streakDays);
     const submittedXp = Math.max(0, Math.floor(payload.xp_earned || 0));
@@ -849,15 +1760,7 @@ async function startServer() {
         `INSERT INTO sessions (book_id, student_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned)
          VALUES (?, ?, ?, ?, ?, ?, ?)`
       )
-      .run(
-        payload.book_id,
-        studentId,
-        payload.start_page,
-        payload.end_page,
-        payload.chapters_finished,
-        payload.duration_minutes,
-        boostedXpEarned
-      );
+      .run(payload.book_id, studentId, safeStartPage, safeEndPage, safeChaptersFinished, safeDurationMinutes, boostedXpEarned);
     const sessionId = Number(sessionInsert.lastInsertRowid);
 
     const reflectionEntries = parseReflectionEntries(payload.questions, payload.answers);
@@ -868,21 +1771,57 @@ async function startServer() {
           (session_id, student_id, book_id, question_index, question_text, answer_text)
           VALUES (?, ?, ?, ?, ?, ?)
         `
-      ).run(
-        sessionId,
-        studentId,
-        payload.book_id,
-        entry.question_index,
-        entry.question_text,
-        entry.answer_text
-      );
+      ).run(sessionId, studentId, payload.book_id, entry.question_index, entry.question_text, entry.answer_text);
     }
 
     db.prepare("UPDATE books SET current_page = ? WHERE id = ? AND student_id = ?").run(
-      payload.end_page,
+      clampedBookPage,
       payload.book_id,
       studentId
     );
+
+    let bookCompletion:
+      | {
+          book_id: number;
+          title: string;
+          total_pages: number;
+          completion_number: number;
+          completed_at: string;
+          sticker_key: null;
+          rating_key: null;
+          sticker_pos_x: null;
+          sticker_pos_y: null;
+        }
+      | null = null;
+    const unlockedAchievements: AchievementUnlock[] = [];
+    if (crossedFinish) {
+      const completion = tryRecordBookCompletion(studentId, payload.book_id);
+      if (completion?.completion_number) {
+        bookCompletion = {
+          book_id: Number(payload.book_id),
+          title: String(bookRow.title ?? "Completed Book"),
+          total_pages: totalBookPages,
+          completion_number: Number(completion.completion_number),
+          completed_at: String(completion.completed_at),
+          sticker_key: null,
+          rating_key: null,
+          sticker_pos_x: null,
+          sticker_pos_y: null,
+        };
+        const bookUnlock = awardBookCompletionAchievement(studentId, completion.completion_number);
+        if (bookUnlock) {
+          unlockedAchievements.push(bookUnlock);
+        }
+      }
+    }
+
+    const thresholdUnlocks = awardThresholdAchievements(studentId);
+    if (thresholdUnlocks.length) {
+      unlockedAchievements.push(...thresholdUnlocks);
+    }
+
+    const achievementBonusXp = unlockedAchievements.reduce((sum, unlock) => sum + unlock.reward_xp, 0);
+    const achievementBonusCoins = unlockedAchievements.reduce((sum, unlock) => sum + unlock.reward_coins, 0);
 
     const currentStats =
       (db
@@ -893,10 +1832,12 @@ async function startServer() {
     const previousTotalCoinsEarned = Number(currentStats.total_coins_earned ?? 0);
     const safeXpEarned = boostedXpEarned;
     const coinRewards = getSessionCoinRewards(previousXp, safeXpEarned);
-    const totalXp = previousXp + safeXpEarned;
+    const sessionCoinsEarned = coinRewards.totalCoins + overtimeBonusCoins;
+    const totalCoinsEarned = sessionCoinsEarned + achievementBonusCoins;
+    const totalXp = previousXp + safeXpEarned + achievementBonusXp;
     const newLevel = Math.floor(totalXp / XP_PER_LEVEL) + 1;
-    const newCoins = previousCoins + coinRewards.totalCoins;
-    const newTotalCoinsEarned = previousTotalCoinsEarned + coinRewards.totalCoins;
+    const newCoins = previousCoins + totalCoinsEarned;
+    const newTotalCoinsEarned = previousTotalCoinsEarned + totalCoinsEarned;
 
     db.prepare(
       `
@@ -911,12 +1852,18 @@ async function startServer() {
       totalXp,
       level: newLevel,
       coins: newCoins,
-      coinsEarned: coinRewards.totalCoins,
+      coinsEarned: sessionCoinsEarned,
       milestoneBonusCoins: coinRewards.milestoneCoins,
       milestonesReached: coinRewards.milestonesCrossed,
+      overtimeBonusCoins,
+      overtimeMinutes,
       xpEarned: safeXpEarned,
       streakDays,
       streakMultiplier,
+      achievementBonusXp,
+      achievementBonusCoins,
+      achievementsUnlocked: unlockedAchievements,
+      bookCompletion,
     };
   });
 
@@ -924,7 +1871,7 @@ async function startServer() {
     const student = resolveStudent(req, res);
     if (!student) return;
 
-    const { book_id, start_page, end_page, chapters_finished, duration_minutes, xp_earned, questions, answers } =
+    const { book_id, start_page, end_page, chapters_finished, duration_minutes, goal_minutes, xp_earned, questions, answers } =
       req.body as SessionPayload;
 
     if (
@@ -933,32 +1880,34 @@ async function startServer() {
       !Number.isFinite(end_page) ||
       !Number.isFinite(chapters_finished) ||
       !Number.isFinite(duration_minutes) ||
+      (goal_minutes != null && !Number.isFinite(goal_minutes)) ||
       !Number.isFinite(xp_earned)
     ) {
       return res.status(400).json({ error: "Invalid session payload" });
     }
 
-    const existingBook = db
-      .prepare("SELECT id FROM books WHERE id = ? AND student_id = ? LIMIT 1")
-      .get(book_id, student.studentId);
-
-    if (!existingBook) {
-      return res.status(404).json({ error: "Book not found for this student" });
+    let sessionResult: ReturnType<typeof runSessionTransaction>;
+    try {
+      sessionResult = runSessionTransaction(
+        {
+          book_id,
+          start_page,
+          end_page,
+          chapters_finished,
+          duration_minutes,
+          goal_minutes,
+          xp_earned,
+          questions,
+          answers,
+        },
+        student.studentId
+      );
+    } catch (err: any) {
+      if (String(err?.message ?? "") === "BOOK_NOT_FOUND") {
+        return res.status(404).json({ error: "Book not found for this student" });
+      }
+      throw err;
     }
-
-    const sessionResult = runSessionTransaction(
-      {
-        book_id,
-        start_page,
-        end_page,
-        chapters_finished,
-        duration_minutes,
-        xp_earned,
-        questions,
-        answers,
-      },
-      student.studentId
-    );
 
     res.json({
       success: true,
@@ -971,7 +1920,13 @@ async function startServer() {
       streak_multiplier: sessionResult.streakMultiplier,
       coins_earned: sessionResult.coinsEarned,
       milestone_bonus_coins: sessionResult.milestoneBonusCoins,
+      overtime_bonus_coins: sessionResult.overtimeBonusCoins,
+      overtime_minutes: sessionResult.overtimeMinutes,
       milestones_reached: sessionResult.milestonesReached,
+      achievement_bonus_xp: sessionResult.achievementBonusXp,
+      achievement_bonus_coins: sessionResult.achievementBonusCoins,
+      achievements_unlocked: sessionResult.achievementsUnlocked,
+      book_completion: sessionResult.bookCompletion,
     });
   });
 
@@ -1111,6 +2066,8 @@ async function startServer() {
           COALESCE(us.total_coins_earned, 0) as total_coins_earned,
           COALESCE(ss.total_sessions, 0) as total_sessions,
           COALESCE(ss.total_minutes, 0) as total_minutes,
+          COALESCE(au.achievements_unlocked, 0) as achievements_unlocked,
+          au.latest_achievement_at,
           ab.title as active_book,
           ab.current_page,
           ab.total_pages
@@ -1124,6 +2081,14 @@ async function startServer() {
           FROM sessions
           GROUP BY student_id
         ) ss ON ss.student_id = s.id
+        LEFT JOIN (
+          SELECT
+            student_id,
+            COUNT(*) as achievements_unlocked,
+            MAX(unlocked_at) as latest_achievement_at
+          FROM achievement_unlocks
+          GROUP BY student_id
+        ) au ON au.student_id = s.id
         LEFT JOIN (
           SELECT
             b.student_id,
@@ -1276,6 +2241,92 @@ async function startServer() {
     });
   });
 
+  app.post("/api/admin/room-test", (req, res) => {
+    if (!requireAdmin(req, res)) return;
+
+    const studentId = toPositiveInt(req.body?.student_id);
+    const itemKey = getStringValue(req.body?.item_key).trim();
+    const itemKeys =
+      Array.isArray(req.body?.item_keys)
+        ? Array.from(
+            new Set(
+              req.body.item_keys
+                .map((entry: unknown) => (typeof entry === "string" ? entry.trim() : ""))
+                .filter((entry: string) => entry.length > 0)
+            )
+          )
+        : [];
+    const keysToGrant = itemKeys.length > 0 ? itemKeys : itemKey ? [itemKey] : [];
+    const equip = req.body?.equip === undefined ? true : Boolean(req.body?.equip);
+    const posXRaw = req.body?.pos_x;
+    const posYRaw = req.body?.pos_y;
+    const zIndexRaw = req.body?.z_index;
+    const hasPosX = !(posXRaw == null || posXRaw === "");
+    const hasPosY = !(posYRaw == null || posYRaw === "");
+    const hasZIndex = !(zIndexRaw == null || zIndexRaw === "");
+    const posX = hasPosX ? parseRoomPosition(posXRaw) : null;
+    const posY = hasPosY ? parseRoomPosition(posYRaw) : null;
+    const zIndex = hasZIndex ? parseRoomZIndex(zIndexRaw) : null;
+
+    if (!studentId) {
+      return res.status(400).json({ error: "Invalid student_id" });
+    }
+
+    if (keysToGrant.length === 0) {
+      return res.status(400).json({ error: "Invalid item_key/item_keys" });
+    }
+
+    if ((hasPosX && posX == null) || (hasPosY && posY == null) || (hasZIndex && zIndex == null)) {
+      return res.status(400).json({ error: "Invalid layout values" });
+    }
+
+    const studentExists = db.prepare("SELECT id FROM students WHERE id = ? LIMIT 1").get(studentId);
+    if (!studentExists) {
+      return res.status(404).json({ error: "Student not found" });
+    }
+
+    const upsertRoomItem = db.prepare(
+      `
+        INSERT INTO student_room_items (student_id, item_key, is_equipped, pos_x, pos_y, z_index)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(student_id, item_key)
+        DO UPDATE SET
+          is_equipped = CASE WHEN excluded.is_equipped = 1 THEN 1 ELSE student_room_items.is_equipped END,
+          pos_x = COALESCE(excluded.pos_x, student_room_items.pos_x),
+          pos_y = COALESCE(excluded.pos_y, student_room_items.pos_y),
+          z_index = COALESCE(excluded.z_index, student_room_items.z_index)
+      `
+    );
+    const grantItems = db.transaction((itemKeyList: string[]) => {
+      for (const key of itemKeyList) {
+        upsertRoomItem.run(studentId, key, equip ? 1 : 0, posX, posY, zIndex);
+      }
+    });
+    grantItems(keysToGrant);
+
+    const counts = db
+      .prepare(
+        `
+          SELECT
+            COUNT(*) as owned_count,
+            SUM(CASE WHEN is_equipped = 1 THEN 1 ELSE 0 END) as equipped_count
+          FROM student_room_items
+          WHERE student_id = ?
+        `
+      )
+      .get(studentId) as { owned_count?: number; equipped_count?: number } | undefined;
+
+    return res.json({
+      student_id: studentId,
+      item_key: keysToGrant[0] ?? null,
+      granted_count: keysToGrant.length,
+      granted_keys: keysToGrant,
+      equipped: equip,
+      owned_count: Number(counts?.owned_count ?? 0),
+      equipped_count: Number(counts?.equipped_count ?? 0),
+    });
+  });
+
   app.post("/api/admin/students", (req, res) => {
     if (!requireAdmin(req, res)) return;
 
@@ -1338,6 +2389,8 @@ async function startServer() {
     }
 
     const deleteStudentData = db.transaction((id: number) => {
+      const deletedAchievementUnlocks = db.prepare("DELETE FROM achievement_unlocks WHERE student_id = ?").run(id).changes;
+      const deletedBookCompletions = db.prepare("DELETE FROM student_book_completions WHERE student_id = ?").run(id).changes;
       const deletedReflections = db.prepare("DELETE FROM session_reflections WHERE student_id = ?").run(id).changes;
       const deletedRoomItems = db.prepare("DELETE FROM student_room_items WHERE student_id = ?").run(id).changes;
       const deletedSessions = db.prepare("DELETE FROM sessions WHERE student_id = ?").run(id).changes;
@@ -1347,6 +2400,8 @@ async function startServer() {
 
       return {
         deleted_students: deletedStudents,
+        deleted_achievement_unlocks: deletedAchievementUnlocks,
+        deleted_book_completions: deletedBookCompletions,
         deleted_reflections: deletedReflections,
         deleted_room_items: deletedRoomItems,
         deleted_sessions: deletedSessions,
@@ -1376,6 +2431,8 @@ async function startServer() {
         return {
           class_code: code,
           deleted_students: 0,
+          deleted_achievement_unlocks: 0,
+          deleted_book_completions: 0,
           deleted_reflections: 0,
           deleted_room_items: 0,
           deleted_sessions: 0,
@@ -1385,6 +2442,12 @@ async function startServer() {
       }
 
       const placeholders = ids.map(() => "?").join(",");
+      const deletedAchievementUnlocks = db
+        .prepare(`DELETE FROM achievement_unlocks WHERE student_id IN (${placeholders})`)
+        .run(...ids).changes;
+      const deletedBookCompletions = db
+        .prepare(`DELETE FROM student_book_completions WHERE student_id IN (${placeholders})`)
+        .run(...ids).changes;
       const deletedReflections = db
         .prepare(`DELETE FROM session_reflections WHERE student_id IN (${placeholders})`)
         .run(...ids).changes;
@@ -1407,6 +2470,8 @@ async function startServer() {
       return {
         class_code: code,
         deleted_students: deletedStudents,
+        deleted_achievement_unlocks: deletedAchievementUnlocks,
+        deleted_book_completions: deletedBookCompletions,
         deleted_reflections: deletedReflections,
         deleted_room_items: deletedRoomItems,
         deleted_sessions: deletedSessions,

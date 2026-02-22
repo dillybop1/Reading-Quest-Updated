@@ -34,6 +34,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           COALESCE(us.total_coins_earned, 0)::int AS total_coins_earned,
           COALESCE(ss.total_sessions, 0)::int AS total_sessions,
           COALESCE(ss.total_minutes, 0)::int AS total_minutes,
+          COALESCE(au.achievements_unlocked, 0)::int AS achievements_unlocked,
+          au.latest_achievement_at,
           ab.title AS active_book,
           ab.current_page,
           ab.total_pages
@@ -47,6 +49,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           FROM sessions
           GROUP BY student_id
         ) ss ON ss.student_id = s.id
+        LEFT JOIN (
+          SELECT
+            student_id,
+            COUNT(*) AS achievements_unlocked,
+            MAX(unlocked_at) AS latest_achievement_at
+          FROM achievement_unlocks
+          GROUP BY student_id
+        ) au ON au.student_id = s.id
         LEFT JOIN (
           SELECT DISTINCT ON (student_id)
             student_id,

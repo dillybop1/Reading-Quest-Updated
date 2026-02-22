@@ -60,16 +60,19 @@ body.dark-mode {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
 }
 
 .bookshelf-stack-scroll {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding-right: 0.18rem;
 }
 
@@ -1003,8 +1006,8 @@ body.dark-mode {
 }
 
 .room-item-sprite-desk-lamp {
-  width: 104px;
-  height: 126px;
+  width: 83px;
+  height: 101px;
   background-image: url("/assets/room/desk-lamp.webp");
 }
 
@@ -1039,26 +1042,26 @@ body.dark-mode {
 }
 
 .room-item-sprite-green-couch {
-  width: 248px;
-  height: 174px;
+  width: 285px;
+  height: 200px;
   background-image: url("/assets/room/green-couch.webp");
 }
 
 .room-item-sprite-tree-hammock {
-  width: 262px;
-  height: 182px;
+  width: 301px;
+  height: 209px;
   background-image: url("/assets/room/tree-hammock.webp");
 }
 
 .room-item-sprite-alarm-clock {
-  width: 92px;
-  height: 92px;
+  width: 55px;
+  height: 55px;
   background-image: url("/assets/room/alarm-clock.webp");
 }
 
 .room-item-sprite-bean-bag {
-  width: 170px;
-  height: 132px;
+  width: 153px;
+  height: 119px;
   background-image: url("/assets/room/bean-bag.webp");
 }
 
@@ -1244,7 +1247,11 @@ body.dark-mode {
     height: 84px;
   }
 
-  .room-item-sprite-desk-lamp,
+  .room-item-sprite-desk-lamp {
+    width: 62px;
+    height: 75px;
+  }
+
   .room-item-sprite-hanging-lamp {
     width: 78px;
     height: 94px;
@@ -1267,23 +1274,23 @@ body.dark-mode {
   }
 
   .room-item-sprite-green-couch {
-    width: 176px;
-    height: 124px;
+    width: 202px;
+    height: 143px;
   }
 
   .room-item-sprite-tree-hammock {
-    width: 178px;
-    height: 126px;
+    width: 205px;
+    height: 145px;
   }
 
   .room-item-sprite-alarm-clock {
-    width: 70px;
-    height: 70px;
+    width: 42px;
+    height: 42px;
   }
 
   .room-item-sprite-bean-bag {
-    width: 120px;
-    height: 94px;
+    width: 108px;
+    height: 85px;
   }
 
   .room-item-sprite-blue-bed,
@@ -1400,4 +1407,104 @@ body.dark-mode {
 
 .theme-dark .room-shop-scroll::-webkit-scrollbar-thumb {
   border-color: rgba(15, 23, 42, 0.88);
+}
+
+.celebration-scroll {
+  overflow-y: auto;
+  padding-right: 0.25rem;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #b45309 transparent;
+}
+
+.celebration-scroll::-webkit-scrollbar {
+  -webkit-appearance: none;
+  background: transparent;
+  width: 10px;
+}
+
+.celebration-scroll::-webkit-scrollbar-track {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.celebration-scroll::-webkit-scrollbar-track-piece {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.celebration-scroll::-webkit-scrollbar-track-piece:start,
+.celebration-scroll::-webkit-scrollbar-track-piece:end {
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.celebration-scroll::-webkit-scrollbar-button {
+  -webkit-appearance: none;
+  width: 0;
+  height: 0;
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.celebration-scroll::-webkit-scrollbar-button:single-button {
+  -webkit-appearance: none;
+  width: 0;
+  height: 0;
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+}
+
+.celebration-scroll::-webkit-scrollbar-button:single-button:vertical:decrement,
+.celebration-scroll::-webkit-scrollbar-button:single-button:vertical:increment,
+.celebration-scroll::-webkit-scrollbar-button:vertical:start:decrement,
+.celebration-scroll::-webkit-scrollbar-button:vertical:end:increment,
+.celebration-scroll::-webkit-scrollbar-button:vertical:start,
+.celebration-scroll::-webkit-scrollbar-button:vertical:end {
+  -webkit-appearance: none;
+  width: 0;
+  height: 0;
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.celebration-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.celebration-scroll::-webkit-scrollbar-thumb {
+  background: #c35d17;
+  border-radius: 9999px;
+  border: 0;
+  box-shadow: none;
+}
+
+.celebration-scroll::-webkit-scrollbar-thumb:hover {
+  background: #d97706;
+}
+
+.celebration-scroll::-webkit-scrollbar-thumb:window-inactive {
+  background: #c35d17;
+}
+
+.theme-dark .celebration-scroll {
+  scrollbar-color: #f59e0b transparent;
+}
+
+.theme-dark .celebration-scroll::-webkit-scrollbar-thumb {
+  border-color: rgba(15, 23, 42, 0.9);
 }

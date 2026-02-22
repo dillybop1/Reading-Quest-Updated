@@ -29,6 +29,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         WITH target_students AS (
           SELECT id FROM students WHERE class_code = $1
         ),
+        removed_achievement_unlocks AS (
+          DELETE FROM achievement_unlocks
+          WHERE student_id IN (SELECT id FROM target_students)
+          RETURNING 1
+        ),
+        removed_book_completions AS (
+          DELETE FROM student_book_completions
+          WHERE student_id IN (SELECT id FROM target_students)
+          RETURNING 1
+        ),
         removed_reflections AS (
           DELETE FROM session_reflections
           WHERE student_id IN (SELECT id FROM target_students)
@@ -62,6 +72,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         SELECT
           $1::text AS class_code,
           (SELECT COUNT(*)::int FROM removed_students) AS deleted_students,
+          (SELECT COUNT(*)::int FROM removed_achievement_unlocks) AS deleted_achievement_unlocks,
+          (SELECT COUNT(*)::int FROM removed_book_completions) AS deleted_book_completions,
           (SELECT COUNT(*)::int FROM removed_reflections) AS deleted_reflections,
           (SELECT COUNT(*)::int FROM removed_room_items) AS deleted_room_items,
           (SELECT COUNT(*)::int FROM removed_sessions) AS deleted_sessions,
@@ -75,6 +87,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       deleted.rows[0] ?? {
         class_code: classCode,
         deleted_students: 0,
+        deleted_achievement_unlocks: 0,
+        deleted_book_completions: 0,
         deleted_reflections: 0,
         deleted_room_items: 0,
         deleted_sessions: 0,

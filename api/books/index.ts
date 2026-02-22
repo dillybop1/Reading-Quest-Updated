@@ -35,9 +35,16 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === "GET") {
-      const result = await query("SELECT * FROM books WHERE student_id = $1 ORDER BY id DESC", [
-        student.studentId,
-      ]);
+      const result = await query(
+        `
+          SELECT *
+          FROM books
+          WHERE student_id = $1
+            AND (COALESCE(total_pages, 0) <= 0 OR COALESCE(current_page, 0) < COALESCE(total_pages, 0))
+          ORDER BY id DESC
+        `,
+        [student.studentId]
+      );
       return res.status(200).json(result.rows);
     }
 
