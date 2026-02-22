@@ -284,6 +284,7 @@ export default function App() {
   const [books, setBooks] = useState<Book[]>([]);
   const [activeBook, setActiveBook] = useState<Book | null>(null);
   const [showAddBookForm, setShowAddBookForm] = useState(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [student, setStudent] = useState<StudentIdentity | null>(null);
   const [classCodeInput, setClassCodeInput] = useState("");
@@ -2055,6 +2056,7 @@ export default function App() {
     if (!student) return;
 
     e.preventDefault();
+    setSetupError(null);
     const formData = new FormData(e.currentTarget);
     const bookData = {
       title: formData.get("title"),
@@ -2071,11 +2073,22 @@ export default function App() {
         body: JSON.stringify(bookData)
       });
       if (!response.ok) {
-        throw new Error(`Failed to create book: ${response.status}`);
+        let message = `Failed to create book: ${response.status}`;
+        try {
+          const errorBody = await response.json();
+          if (typeof errorBody?.error === "string") {
+            message = errorBody.error;
+          }
+        } catch {
+          // Ignore JSON parse failure and use default message.
+        }
+        throw new Error(message);
       }
+      setSetupError(null);
       setShowAddBookForm(false);
       await fetchInitialData();
-    } catch (err) {
+    } catch (err: any) {
+      setSetupError(String(err?.message ?? err));
       console.error("Failed to create book", err);
     }
   };
@@ -2945,6 +2958,7 @@ export default function App() {
               <button type="submit" className="quest-button w-full mt-4">
                 Let's Read!
               </button>
+              {setupError && <p className="text-sm text-rose-600 font-medium">{setupError}</p>}
             </form>
           </motion.div>
         )}

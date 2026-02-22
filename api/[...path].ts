@@ -41,9 +41,20 @@ const normalizePath = (rawUrl: string | undefined) => {
   return trimmed || "/";
 };
 
+const pathFromCatchAll = (value: string | string[] | undefined) => {
+  if (Array.isArray(value) && value.length) {
+    return `/api/${value.map((segment) => String(segment || "").trim()).filter(Boolean).join("/")}`;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const cleaned = value.trim().replace(/^\/+/, "");
+    return cleaned.startsWith("api/") ? `/${cleaned}` : `/api/${cleaned}`;
+  }
+  return null;
+};
+
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  const pathQuery = Array.isArray(req.query.path) ? req.query.path[0] : req.query.path;
-  const pathname = typeof pathQuery === "string" && pathQuery.trim() ? normalizePath(pathQuery) : normalizePath(req.url);
+  const pathParam = req.query.path as string | string[] | undefined;
+  const pathname = normalizePath(pathFromCatchAll(pathParam) ?? req.url);
   const routeHandler = ROUTES[pathname];
 
   if (!routeHandler) {
