@@ -28,6 +28,7 @@ import {
   RoomItemState,
   RoomStateResponse,
   SessionRewardSummary,
+  AchievementsResponse,
 } from "./types";
 
 const STUDENT_STORAGE_KEY = "reading-quest-student";
@@ -243,6 +244,7 @@ export default function App() {
     | "admin"
     | "setup"
     | "bookshelf"
+    | "achievements"
     | "room"
     | "roomView"
     | "roomShop"
@@ -271,6 +273,7 @@ export default function App() {
   // Celebration State
   const [earnedXp, setEarnedXp] = useState(0);
   const [sessionRewardSummary, setSessionRewardSummary] = useState<SessionRewardSummary | null>(null);
+  const [achievementsData, setAchievementsData] = useState<AchievementsResponse | null>(null);
   const [roomState, setRoomState] = useState<RoomStateResponse | null>(null);
   const [roomError, setRoomError] = useState<string | null>(null);
   const [roomBusyKey, setRoomBusyKey] = useState<string | null>(null);
@@ -1199,11 +1202,12 @@ export default function App() {
     }
 
     try {
-      const [booksResult, activeBookResult, statsResult, roomResult] = await Promise.allSettled([
+      const [booksResult, activeBookResult, statsResult, roomResult, achievementsResult] = await Promise.allSettled([
         fetch(withStudentQuery("/api/books")),
         fetch(withStudentQuery("/api/books/active")),
         fetch(withStudentQuery("/api/stats")),
         fetch(withStudentQuery("/api/room")),
+        fetch(withStudentQuery("/api/achievements")),
       ]);
 
       let booksData: Book[] = [];
@@ -1264,6 +1268,19 @@ export default function App() {
         }
       } else {
         console.error("room request failed", roomResult.reason);
+      }
+
+      if (achievementsResult.status === "fulfilled") {
+        if (achievementsResult.value.ok) {
+          const achievementData = (await achievementsResult.value.json()) as AchievementsResponse;
+          setAchievementsData(achievementData);
+        } else {
+          console.error(`achievements failed: ${achievementsResult.value.status}`);
+          setAchievementsData(null);
+        }
+      } else {
+        console.error("achievements request failed", achievementsResult.reason);
+        setAchievementsData(null);
       }
 
       if (booksData.length === 0 && !statsData) {
@@ -1375,6 +1392,7 @@ export default function App() {
     setShowAddBookForm(false);
     setStats(null);
     setSessionRewardSummary(null);
+    setAchievementsData(null);
     setRoomState(null);
     setRoomError(null);
     setRoomBusyKey(null);
@@ -1457,6 +1475,11 @@ export default function App() {
         overtime_bonus_coins: Number(rewardData.overtime_bonus_coins ?? 0),
         overtime_minutes: Number(rewardData.overtime_minutes ?? 0),
         milestones_reached: Number(rewardData.milestones_reached ?? 0),
+        achievement_bonus_xp: Number(rewardData.achievement_bonus_xp ?? 0),
+        achievement_bonus_coins: Number(rewardData.achievement_bonus_coins ?? 0),
+        achievements_unlocked: Array.isArray(rewardData.achievements_unlocked)
+          ? rewardData.achievements_unlocked
+          : [],
       });
 
       setActiveBook(prev =>
@@ -1954,6 +1977,8 @@ export default function App() {
                             <th className="pb-2 pr-4">Coins</th>
                             <th className="pb-2 pr-4">Quests</th>
                             <th className="pb-2 pr-4">Hours</th>
+                            <th className="pb-2 pr-4">Achievements</th>
+                            <th className="pb-2 pr-4">Latest Unlock</th>
                             <th className="pb-2">Active Book</th>
                             <th className="pb-2 pl-3">Grant Coins</th>
                             <th className="pb-2 pl-3">Delete</th>
@@ -1969,6 +1994,12 @@ export default function App() {
                               <td className="py-2 pr-4 font-semibold text-emerald-700">{row.coins ?? 0}</td>
                               <td className="py-2 pr-4">{row.total_sessions}</td>
                               <td className="py-2 pr-4">{(row.total_minutes / 60).toFixed(1)}</td>
+                              <td className="py-2 pr-4">{row.achievements_unlocked ?? 0}</td>
+                              <td className="py-2 pr-4">
+                                {row.latest_achievement_at
+                                  ? new Date(row.latest_achievement_at).toLocaleDateString()
+                                  : "Never"}
+                              </td>
                               <td className="py-2">
                                 {row.active_book
                                   ? `${row.active_book} (${row.current_page ?? 0}/${row.total_pages ?? 0})`
@@ -2304,6 +2335,14 @@ export default function App() {
                   <p className="text-slate-500 font-medium">Choose a book spine to make it your current quest.</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setView("achievements")}
+                    className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                  >
+                    <Trophy className="w-4 h-4" />
+                    Achievements
+                  </button>
                   <button
                     type="button"
                     onClick={() => {
@@ -2714,6 +2753,87 @@ export default function App() {
               </button>
               </div>
             </div>
+
+          </motion.div>
+        )}
+
+        {view === "achievements" && (
+          <motion.div
+            key="achievements"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="space-y-6"
+          >
+            <div className={roomMenuCardClass}>
+              <div className="flex items-start justify-between gap-3 mb-4">
+                <div>
+                  <h2 className="text-2xl font-bold flex items-center gap-2">
+                    <Trophy className="w-6 h-6 text-amber-500" />
+                    Achievements
+                  </h2>
+                  <p className="text-sm text-slate-500">
+                    {achievementsData
+                      ? `${achievementsData.unlocked_total} unlocks • ${achievementsData.completed_books_count} books completed`
+                      : "Track your milestones and book completion rewards."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setView("bookshelf")}
+                  className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+                >
+                  Back to Bookshelf
+                </button>
+              </div>
+
+              <div className={roomMenuBodyClass}>
+                {achievementsData?.achievements?.length ? (
+                  <div className="space-y-3 pr-1">
+                    {achievementsData.achievements.map((achievement) => {
+                      const safeTarget = achievement.target == null ? null : Math.max(1, achievement.target);
+                      const safeProgress = Math.max(0, achievement.progress);
+                      const progressPct =
+                        safeTarget == null ? (safeProgress > 0 ? 100 : 0) : Math.min(100, (safeProgress / safeTarget) * 100);
+                      const progressLabel =
+                        safeTarget == null
+                          ? `${achievement.times_earned} earned`
+                          : `${Math.min(safeProgress, safeTarget)}/${safeTarget}`;
+
+                      return (
+                        <div
+                          key={achievement.key}
+                          className={`rounded-xl border-2 p-3 ${
+                            achievement.is_unlocked
+                              ? "border-emerald-200 bg-emerald-50"
+                              : "border-slate-200 bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-slate-900">{achievement.title}</p>
+                              <p className="text-xs text-slate-600 mt-1">{achievement.description}</p>
+                            </div>
+                            <p className="text-xs font-bold text-slate-700 whitespace-nowrap">
+                              +{achievement.reward_xp} XP • +{achievement.reward_coins} Coins
+                            </p>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between text-xs font-semibold text-slate-600">
+                            <span>{progressLabel}</span>
+                            {achievement.is_repeatable && <span className="text-emerald-700">Repeatable</span>}
+                          </div>
+                          <div className="mt-2 h-2 bg-white rounded-full border border-slate-200 overflow-hidden">
+                            <div className="h-full bg-emerald-400" style={{ width: `${progressPct}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-slate-500">No achievements yet.</p>
+                )}
+              </div>
+            </div>
           </motion.div>
         )}
 
@@ -2905,12 +3025,28 @@ export default function App() {
                 <span className="font-bold text-slate-400 uppercase text-xs">XP Earned</span>
                 <span className="font-display font-bold text-2xl text-amber-600">+{earnedXp}</span>
               </div>
+              {(sessionRewardSummary?.achievement_bonus_xp ?? 0) > 0 && (
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-bold text-slate-400 uppercase text-xs">Achievement XP</span>
+                  <span className="font-display font-bold text-xl text-violet-600">
+                    +{sessionRewardSummary?.achievement_bonus_xp ?? 0}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between items-center mb-2">
                 <span className="font-bold text-slate-400 uppercase text-xs">Coins Earned</span>
                 <span className="font-display font-bold text-2xl text-emerald-600">
                   +{sessionRewardSummary?.coins_earned ?? 0}
                 </span>
               </div>
+              {(sessionRewardSummary?.achievement_bonus_coins ?? 0) > 0 && (
+                <div className="flex justify-between items-center mb-2">
+                  <span className="font-bold text-slate-400 uppercase text-xs">Achievement Coins</span>
+                  <span className="font-display font-bold text-xl text-violet-600">
+                    +{sessionRewardSummary?.achievement_bonus_coins ?? 0}
+                  </span>
+                </div>
+              )}
               {(sessionRewardSummary?.milestone_bonus_coins ?? 0) > 0 && (
                 <div className="flex justify-between items-center mb-2">
                   <span className="font-bold text-slate-400 uppercase text-xs">Milestone Bonus</span>
@@ -2932,6 +3068,22 @@ export default function App() {
                 <span className="font-display font-bold text-2xl text-emerald-600">{stats?.level}</span>
               </div>
             </div>
+
+            {(sessionRewardSummary?.achievements_unlocked?.length ?? 0) > 0 && (
+              <div className="bg-amber-50 rounded-2xl p-4 border-2 border-amber-200 mb-8 max-w-xl mx-auto text-left">
+                <p className="font-bold text-amber-800 mb-2">Achievements Unlocked</p>
+                <div className="space-y-2">
+                  {sessionRewardSummary?.achievements_unlocked?.map((unlock) => (
+                    <div key={`${unlock.key}-${unlock.period_key}`} className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-slate-700">{unlock.title}</span>
+                      <span className="text-xs font-bold text-emerald-700">
+                        +{unlock.reward_xp} XP • +{unlock.reward_coins} Coins
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <button onClick={() => setView("bookshelf")} className="quest-button w-full sm:w-auto px-6 sm:px-12">
               Back to Bookshelf

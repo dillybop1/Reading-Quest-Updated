@@ -50,6 +50,8 @@ export interface AdminStudentRow {
   total_coins_earned: number;
   total_sessions: number;
   total_minutes: number;
+  achievements_unlocked: number;
+  latest_achievement_at: string | null;
   active_book: string | null;
   current_page: number | null;
   total_pages: number | null;
@@ -100,6 +102,43 @@ export interface SessionRewardSummary {
   overtime_bonus_coins?: number;
   overtime_minutes?: number;
   milestones_reached: number;
+  achievement_bonus_xp?: number;
+  achievement_bonus_coins?: number;
+  achievements_unlocked?: AchievementUnlock[];
+}
+
+export interface AchievementUnlock {
+  key: string;
+  title: string;
+  description: string;
+  reward_xp: number;
+  reward_coins: number;
+  period_key: string;
+  unlocked_at: string;
+  is_repeatable: boolean;
+}
+
+export interface AchievementProgress {
+  key: string;
+  title: string;
+  description: string;
+  reward_xp: number;
+  reward_coins: number;
+  target: number | null;
+  progress: number;
+  is_unlocked: boolean;
+  is_repeatable: boolean;
+  times_earned: number;
+  current_period_key: string | null;
+}
+
+export interface AchievementsResponse {
+  current_period_key: string;
+  completed_books_count: number;
+  unlocked_total: number;
+  total_available: number;
+  achievements: AchievementProgress[];
+  recent_unlocks: AchievementUnlock[];
 }
 
 export interface RoomItemState {
