@@ -1,5 +1,11 @@
 {
+  "functions": {
+    "api/[...path].ts": {
+      "includeFiles": "api-handlers/**"
+    }
+  },
   "routes": [
+    { "src": "/api/(.*)", "dest": "/api/[...path].ts?path=$1" },
     { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
