@@ -146,6 +146,71 @@ body.dark-mode {
   color: rgba(15, 23, 42, 0.82);
 }
 
+.menu-action-button {
+  isolation: isolate;
+}
+
+.menu-action-shine {
+  position: absolute;
+  left: -12%;
+  top: -30%;
+  width: 36%;
+  height: 170%;
+  background: linear-gradient(105deg, transparent 5%, rgba(255, 255, 255, 0.75) 48%, transparent 92%);
+  transform: translateX(-160%) rotate(12deg);
+  opacity: 0;
+  animation: menuShineSweep 5.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.menu-action-button:hover .menu-action-icon {
+  animation: menuIconBounce 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.menu-ripple-button {
+  isolation: isolate;
+}
+
+.menu-ripple-button::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, rgba(251, 191, 36, 0.38) 0%, rgba(251, 191, 36, 0) 72%);
+  transform: translate(-50%, -50%) scale(0.25);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.menu-ripple-button:active::after {
+  transform: translate(-50%, -50%) scale(9);
+  opacity: 1;
+  transition: transform 360ms ease, opacity 520ms ease;
+}
+
+.room-hub-nav-button {
+  min-height: 2.5rem;
+}
+
+.achievement-unlocked-stamp {
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.hall-sticker-button {
+  transform: translate(-50%, -50%) rotate(-8deg);
+}
+
+.hall-sticker-button-dragging {
+  transform: translate(-50%, -50%) rotate(6deg) scale(1.05);
+}
+
+.hall-sticker-button-snap {
+  animation: hallStickerSnap 480ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 @keyframes roomCloudDrift {
   0% {
     transform: translateX(-18px);
@@ -185,6 +250,54 @@ body.dark-mode {
   }
   100% {
     opacity: 0.55;
+  }
+}
+
+@keyframes menuShineSweep {
+  0% {
+    transform: translateX(-160%) rotate(12deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 0.45;
+  }
+  34% {
+    transform: translateX(185%) rotate(12deg);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(185%) rotate(12deg);
+    opacity: 0;
+  }
+}
+
+@keyframes menuIconBounce {
+  0% {
+    transform: translateY(0) scale(1);
+  }
+  32% {
+    transform: translateY(-3px) scale(1.08);
+  }
+  66% {
+    transform: translateY(1px) scale(0.96);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes hallStickerSnap {
+  0% {
+    transform: translate(-50%, -50%) rotate(-8deg) scale(1);
+  }
+  28% {
+    transform: translate(-50%, -50%) rotate(8deg) scale(1.1);
+  }
+  60% {
+    transform: translate(-50%, -50%) rotate(-12deg) scale(0.93);
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(-8deg) scale(1);
   }
 }
 
@@ -1507,4 +1620,16 @@ body.dark-mode {
 
 .theme-dark .celebration-scroll::-webkit-scrollbar-thumb {
   border-color: rgba(15, 23, 42, 0.9);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-action-shine,
+  .menu-action-icon,
+  .hall-sticker-button-snap {
+    animation: none !important;
+  }
+
+  .menu-ripple-button::after {
+    transition: none !important;
+  }
 }

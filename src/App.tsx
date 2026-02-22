@@ -93,6 +93,42 @@ type RoomShopCategoryId =
   | "decor"
   | "bookshelves"
   | "misc";
+type AppView =
+  | "loading"
+  | "student"
+  | "admin"
+  | "setup"
+  | "bookshelf"
+  | "hallOfReads"
+  | "achievements"
+  | "room"
+  | "roomView"
+  | "roomShop"
+  | "dashboard"
+  | "reading"
+  | "summary"
+  | "questions"
+  | "bookCompletion"
+  | "celebration";
+
+const VIEW_MOTION_ORDER: Record<AppView, number> = {
+  loading: 0,
+  student: 1,
+  admin: 1,
+  setup: 2,
+  bookshelf: 3,
+  achievements: 4,
+  hallOfReads: 4,
+  room: 4,
+  roomShop: 5,
+  roomView: 6,
+  dashboard: 4,
+  reading: 5,
+  summary: 6,
+  questions: 7,
+  bookCompletion: 8,
+  celebration: 9,
+};
 
 const ROOM_SHOP_CATEGORIES: Array<{ id: RoomShopCategoryId; label: string }> = [
   { id: "all", label: "All" },
@@ -279,6 +315,58 @@ const getStickerOption = (stickerKey: string | null | undefined) =>
 const getRatingOption = (ratingKey: string | null | undefined) =>
   BOOK_RATING_OPTIONS.find((option) => option.key === ratingKey) ?? null;
 
+const useCountUpValue = (targetValue: number, prefersReducedMotion: boolean, durationMs = 600) => {
+  const safeTarget = Number.isFinite(targetValue) ? Math.round(targetValue) : 0;
+  const [displayValue, setDisplayValue] = useState(safeTarget);
+  const frameRef = useRef<number | null>(null);
+  const fromValueRef = useRef(safeTarget);
+
+  useEffect(() => {
+    if (frameRef.current != null) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = null;
+    }
+
+    if (prefersReducedMotion) {
+      fromValueRef.current = safeTarget;
+      setDisplayValue(safeTarget);
+      return;
+    }
+
+    const startValue = fromValueRef.current;
+    if (startValue === safeTarget) {
+      setDisplayValue(safeTarget);
+      return;
+    }
+
+    const startTime = performance.now();
+    const step = (now: number) => {
+      const progress = Math.min(1, (now - startTime) / durationMs);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const nextValue = Math.round(startValue + (safeTarget - startValue) * eased);
+      setDisplayValue(nextValue);
+
+      if (progress < 1) {
+        frameRef.current = requestAnimationFrame(step);
+      } else {
+        fromValueRef.current = safeTarget;
+        frameRef.current = null;
+      }
+    };
+
+    frameRef.current = requestAnimationFrame(step);
+
+    return () => {
+      if (frameRef.current != null) {
+        cancelAnimationFrame(frameRef.current);
+        frameRef.current = null;
+      }
+    };
+  }, [durationMs, prefersReducedMotion, safeTarget]);
+
+  return displayValue;
+};
+
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [books, setBooks] = useState<Book[]>([]);
@@ -324,24 +412,10 @@ export default function App() {
   const [adminTapCount, setAdminTapCount] = useState(0);
   const adminTapResetRef = useRef<NodeJS.Timeout | null>(null);
   const [adminAccessKey, setAdminAccessKey] = useState<string | null>(null);
-  const [view, setView] = useState<
-    | "loading"
-    | "student"
-    | "admin"
-    | "setup"
-    | "bookshelf"
-    | "hallOfReads"
-    | "achievements"
-    | "room"
-    | "roomView"
-    | "roomShop"
-    | "dashboard"
-    | "reading"
-    | "summary"
-    | "questions"
-    | "bookCompletion"
-    | "celebration"
-  >("loading");
+  const [view, setView] = useState<AppView>("loading");
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
+  const previousViewRef = useRef<AppView>("loading");
+  const [viewDirection, setViewDirection] = useState(1);
   
   // Reading Session State
   const [timerSeconds, setTimerSeconds] = useState(0);
@@ -393,6 +467,13 @@ export default function App() {
   const [bookshelfPage, setBookshelfPage] = useState(1);
   const [roomShopPage, setRoomShopPage] = useState(1);
   const [roomShopCategory, setRoomShopCategory] = useState<RoomShopCategoryId>("all");
+  const [roomHubActiveNav, setRoomHubActiveNav] = useState<"roomView" | "roomShop" | "bookshelf">("roomView");
+  const [roomActionFeedback, setRoomActionFeedback] = useState<{
+    itemKey: string;
+    action: "purchase" | "equip" | "unequip";
+    token: number;
+  } | null>(null);
+  const [hallStickerSnapCompletion, setHallStickerSnapCompletion] = useState<number | null>(null);
   const roomFrameRef = useRef<HTMLDivElement | null>(null);
   const roomStateRef = useRef<RoomStateResponse | null>(null);
   const hallCardRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -409,6 +490,25 @@ export default function App() {
       document.body.classList.remove("dark-mode");
     };
   }, [isDarkMode]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setPrefersReducedMotion(mediaQuery.matches);
+
+    const handleMotionPreference = (event: MediaQueryListEvent) => {
+      setPrefersReducedMotion(event.matches);
+    };
+
+    if (typeof mediaQuery.addEventListener === "function") {
+      mediaQuery.addEventListener("change", handleMotionPreference);
+      return () => mediaQuery.removeEventListener("change", handleMotionPreference);
+    }
+
+    mediaQuery.addListener(handleMotionPreference);
+    return () => mediaQuery.removeListener(handleMotionPreference);
+  }, []);
 
   useEffect(() => {
     const raw = localStorage.getItem(STUDENT_STORAGE_KEY);
@@ -452,6 +552,17 @@ export default function App() {
   }, [roomState]);
 
   useEffect(() => {
+    const previousView = previousViewRef.current;
+    if (previousView === view) return;
+
+    const previousOrder = VIEW_MOTION_ORDER[previousView] ?? 0;
+    const nextOrder = VIEW_MOTION_ORDER[view] ?? 0;
+    const nextDirection = nextOrder === previousOrder ? 0 : nextOrder > previousOrder ? 1 : -1;
+    setViewDirection(nextDirection);
+    previousViewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
     if (view !== "roomView") {
       setIsRoomCustomizeMode(false);
       setRoomDragState(null);
@@ -476,6 +587,30 @@ export default function App() {
       setCompletedBookSavingKey(null);
     }
   }, [view]);
+
+  useEffect(() => {
+    if (view === "room") {
+      setRoomHubActiveNav("roomView");
+    }
+  }, [view]);
+
+  useEffect(() => {
+    if (!roomActionFeedback) return;
+    const timeoutId = setTimeout(() => {
+      setRoomActionFeedback(null);
+    }, 900);
+
+    return () => clearTimeout(timeoutId);
+  }, [roomActionFeedback]);
+
+  useEffect(() => {
+    if (hallStickerSnapCompletion == null) return;
+    const timeoutId = setTimeout(() => {
+      setHallStickerSnapCompletion(null);
+    }, 520);
+
+    return () => clearTimeout(timeoutId);
+  }, [hallStickerSnapCompletion]);
 
   const parseNumberInput = (value: string, fallback = 0) => {
     const parsed = Number.parseInt(value, 10);
@@ -966,6 +1101,7 @@ export default function App() {
 
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     setHallStickerDragState(null);
+    setHallStickerSnapCompletion(book.completion_number);
 
     const nextPosition =
       hallStickerDraftPositionByCompletion[book.completion_number] ??
@@ -1117,6 +1253,11 @@ export default function App() {
             }
           : prev
       );
+      setRoomActionFeedback({
+        itemKey,
+        action,
+        token: Date.now(),
+      });
     } catch (err: any) {
       setRoomError(String(err?.message ?? err));
     } finally {
@@ -2171,6 +2312,21 @@ export default function App() {
   const roomOwnedCount = roomState?.items.filter((item) => item.owned).length ?? 0;
   const roomEquippedCount = roomState?.items.filter((item) => item.equipped).length ?? 0;
   const roomUnlockedCount = roomState?.items.filter((item) => item.unlocked).length ?? 0;
+  const milestoneProgressPercent = getMilestoneProgressPercent(stats?.total_xp || 0, stats?.next_milestone_xp || 500);
+  const animatedTotalXp = useCountUpValue(stats?.total_xp ?? 0, prefersReducedMotion, 620);
+  const animatedCoins = useCountUpValue(stats?.coins ?? 0, prefersReducedMotion, 560);
+  const directionalViewMotion = {
+    initial: prefersReducedMotion
+      ? { opacity: 0 }
+      : { opacity: 0, x: viewDirection >= 0 ? 26 : -26, y: 10, scale: 0.985 },
+    animate: { opacity: 1, x: 0, y: 0, scale: 1 },
+    exit: prefersReducedMotion
+      ? { opacity: 0 }
+      : { opacity: 0, x: viewDirection >= 0 ? -20 : 20, y: -8, scale: 0.992 },
+    transition: prefersReducedMotion
+      ? { duration: 0.16 }
+      : { duration: 0.28, ease: [0.22, 1, 0.36, 1] as const },
+  };
 
   if (view === "loading") {
     return (
@@ -2328,10 +2484,10 @@ export default function App() {
             <div className="text-right">
               <p className="text-xs font-bold uppercase tracking-wider text-slate-500">Total XP / Coins</p>
               <p className="font-display font-bold text-xl text-amber-600">
-                {stats?.total_xp ?? 0} XP
+                {animatedTotalXp} XP
               </p>
               <p className="font-display font-bold text-lg text-emerald-600">
-                {stats?.coins ?? 0} Coins
+                {animatedCoins} Coins
               </p>
               <button
                 onClick={handleSwitchStudent}
@@ -2344,11 +2500,14 @@ export default function App() {
           </div>
           <div className="h-4 bg-slate-200 rounded-full border-2 border-slate-900 overflow-hidden">
             <motion.div
-              className="h-full bg-amber-400"
-              initial={{ width: 0 }}
-              animate={{
-                width: `${getMilestoneProgressPercent(stats?.total_xp || 0, stats?.next_milestone_xp || 500)}%`,
-              }}
+              className="h-full bg-amber-400 origin-left"
+              initial={{ scaleX: 0 }}
+              animate={{ scaleX: milestoneProgressPercent / 100 }}
+              transition={
+                prefersReducedMotion
+                  ? { duration: 0.16 }
+                  : { type: "spring", stiffness: 190, damping: 18, mass: 0.85 }
+              }
             />
           </div>
           <p className="text-[11px] mt-2 text-slate-500 font-semibold">
@@ -2362,9 +2521,7 @@ export default function App() {
         {view === "student" && (
           <motion.div
             key="student"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className="quest-card"
           >
             <div className="flex items-start justify-between mb-2">
@@ -2415,9 +2572,7 @@ export default function App() {
         {view === "admin" && (
           <motion.div
             key="admin"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className="space-y-6"
           >
             <div className="quest-card">
@@ -2938,9 +3093,7 @@ export default function App() {
         {view === "setup" && (
           <motion.div 
             key="setup"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className={roomMenuCardClass}
           >
             <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
@@ -2970,9 +3123,7 @@ export default function App() {
         {view === "bookshelf" && (
           <motion.div 
             key="bookshelf"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className="space-y-6"
           >
             <div className={bookshelfMenuCardClass}>
@@ -2985,17 +3136,19 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setView("achievements")}
-                    className="group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-amber-300 bg-[linear-gradient(135deg,#fff7d1,#fde68a)] font-extrabold text-amber-900 shadow-[0_3px_0_0_rgba(180,83,9,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(180,83,9,0.45)] transition-all flex items-center gap-2"
+                    className="menu-action-button group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-amber-300 bg-[linear-gradient(135deg,#fff7d1,#fde68a)] font-extrabold text-amber-900 shadow-[0_3px_0_0_rgba(180,83,9,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(180,83,9,0.45)] transition-all flex items-center gap-2"
                   >
-                    <Trophy className="w-4 h-4 text-amber-700 group-hover:scale-110 transition-transform" />
+                    <span className="menu-action-shine" aria-hidden="true" />
+                    <Trophy className="menu-action-icon w-4 h-4 text-amber-700 transition-transform" />
                     Achievements
                   </button>
                   <button
                     type="button"
                     onClick={() => setView("hallOfReads")}
-                    className="group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-sky-300 bg-[linear-gradient(135deg,#e0f2fe,#bae6fd)] font-extrabold text-sky-900 shadow-[0_3px_0_0_rgba(3,105,161,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(3,105,161,0.45)] transition-all flex items-center gap-2"
+                    className="menu-action-button group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-sky-300 bg-[linear-gradient(135deg,#e0f2fe,#bae6fd)] font-extrabold text-sky-900 shadow-[0_3px_0_0_rgba(3,105,161,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(3,105,161,0.45)] transition-all flex items-center gap-2"
                   >
-                    <BookOpen className="w-4 h-4 text-sky-700 group-hover:scale-110 transition-transform" />
+                    <span className="menu-action-shine" aria-hidden="true" />
+                    <BookOpen className="menu-action-icon w-4 h-4 text-sky-700 transition-transform" />
                     Hall of Reads
                   </button>
                   <button
@@ -3006,8 +3159,10 @@ export default function App() {
                         void loadRoomState();
                       }
                     }}
-                    className="group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-violet-300 bg-[linear-gradient(135deg,#ede9fe,#ddd6fe)] font-extrabold text-violet-900 shadow-[0_3px_0_0_rgba(91,33,182,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(91,33,182,0.45)] transition-all"
+                    className="menu-action-button group relative overflow-hidden py-2.5 px-4 rounded-2xl border-2 border-violet-300 bg-[linear-gradient(135deg,#ede9fe,#ddd6fe)] font-extrabold text-violet-900 shadow-[0_3px_0_0_rgba(91,33,182,0.35)] hover:-translate-y-0.5 hover:shadow-[0_5px_0_0_rgba(91,33,182,0.45)] transition-all flex items-center gap-2"
                   >
+                    <span className="menu-action-shine" aria-hidden="true" />
+                    <Star className="menu-action-icon w-4 h-4 text-violet-700 transition-transform" />
                     My Room
                   </button>
                   <button
@@ -3102,9 +3257,7 @@ export default function App() {
         {view === "room" && (
           <motion.div
             key="room"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className={showRoomShell ? "" : "space-y-6"}
           >
             <div className={roomMenuCardClass}>
@@ -3118,33 +3271,89 @@ export default function App() {
                     Every 500 XP milestone grants a bonus coin reward.
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-2">
+                <div className="menu-nav-group flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => {
+                      setRoomHubActiveNav("roomView");
                       setView("roomView");
                       if (!roomState) void loadRoomState();
                     }}
-                    className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-600 font-bold hover:bg-slate-50 disabled:opacity-50"
+                    onPointerEnter={() => setRoomHubActiveNav("roomView")}
+                    onFocus={() => setRoomHubActiveNav("roomView")}
+                    className={`menu-ripple-button room-hub-nav-button relative overflow-hidden py-2 px-4 rounded-xl border-2 font-bold transition-colors disabled:opacity-50 ${
+                      roomHubActiveNav === "roomView"
+                        ? "border-slate-900 text-slate-900"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
                   >
-                    View Room
+                    {roomHubActiveNav === "roomView" && (
+                      <motion.span
+                        layoutId="room-hub-nav-pill"
+                        className="pointer-events-none absolute inset-[2px] rounded-lg bg-amber-100"
+                        transition={
+                          prefersReducedMotion
+                            ? { duration: 0.12 }
+                            : { type: "spring", stiffness: 360, damping: 32, mass: 0.8 }
+                        }
+                      />
+                    )}
+                    <span className="relative z-10">View Room</span>
                   </button>
                   <button
                     type="button"
                     onClick={() => {
+                      setRoomHubActiveNav("roomShop");
                       setView("roomShop");
                       if (!roomState) void loadRoomState();
                     }}
-                    className="py-2 px-4 rounded-xl border-2 border-slate-200 text-slate-600 font-bold hover:bg-slate-50"
+                    onPointerEnter={() => setRoomHubActiveNav("roomShop")}
+                    onFocus={() => setRoomHubActiveNav("roomShop")}
+                    className={`menu-ripple-button room-hub-nav-button relative overflow-hidden py-2 px-4 rounded-xl border-2 font-bold transition-colors ${
+                      roomHubActiveNav === "roomShop"
+                        ? "border-slate-900 text-slate-900"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
                   >
-                    Room Shop
+                    {roomHubActiveNav === "roomShop" && (
+                      <motion.span
+                        layoutId="room-hub-nav-pill"
+                        className="pointer-events-none absolute inset-[2px] rounded-lg bg-amber-100"
+                        transition={
+                          prefersReducedMotion
+                            ? { duration: 0.12 }
+                            : { type: "spring", stiffness: 360, damping: 32, mass: 0.8 }
+                        }
+                      />
+                    )}
+                    <span className="relative z-10">Room Shop</span>
                   </button>
                   <button
                     type="button"
-                    onClick={() => setView("bookshelf")}
-                    className="py-2 px-4 rounded-xl border-2 border-slate-200 font-bold text-slate-600 hover:bg-slate-50"
+                    onClick={() => {
+                      setRoomHubActiveNav("bookshelf");
+                      setView("bookshelf");
+                    }}
+                    onPointerEnter={() => setRoomHubActiveNav("bookshelf")}
+                    onFocus={() => setRoomHubActiveNav("bookshelf")}
+                    className={`menu-ripple-button room-hub-nav-button relative overflow-hidden py-2 px-4 rounded-xl border-2 font-bold transition-colors ${
+                      roomHubActiveNav === "bookshelf"
+                        ? "border-slate-900 text-slate-900"
+                        : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                    }`}
                   >
-                    Back to Bookshelf
+                    {roomHubActiveNav === "bookshelf" && (
+                      <motion.span
+                        layoutId="room-hub-nav-pill"
+                        className="pointer-events-none absolute inset-[2px] rounded-lg bg-amber-100"
+                        transition={
+                          prefersReducedMotion
+                            ? { duration: 0.12 }
+                            : { type: "spring", stiffness: 360, damping: 32, mass: 0.8 }
+                        }
+                      />
+                    )}
+                    <span className="relative z-10">Back to Bookshelf</span>
                   </button>
                 </div>
               </div>
@@ -3189,9 +3398,7 @@ export default function App() {
         {view === "roomShop" && (
           <motion.div
             key="roomShop"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className={showRoomShell ? "" : "space-y-6"}
           >
             <div className={roomMenuCardClass}>
@@ -3227,13 +3434,26 @@ export default function App() {
                       key={category.id}
                       type="button"
                       onClick={() => setRoomShopCategory(category.id)}
-                      className={`px-3 py-1.5 rounded-xl border-2 text-xs font-bold ${
+                      className={`menu-ripple-button relative overflow-hidden px-3 py-1.5 rounded-xl border-2 text-xs font-bold transition-colors ${
                         isSelected
-                          ? "border-slate-900 bg-amber-200 text-slate-900"
+                          ? "border-slate-900 text-slate-900"
                           : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                       }`}
                     >
-                      {category.label} ({count})
+                      {isSelected && (
+                        <motion.span
+                          layoutId="room-shop-category-pill"
+                          className="pointer-events-none absolute inset-[2px] rounded-lg bg-amber-200"
+                          transition={
+                            prefersReducedMotion
+                              ? { duration: 0.12 }
+                              : { type: "spring", stiffness: 420, damping: 34, mass: 0.78 }
+                          }
+                        />
+                      )}
+                      <span className="relative z-10">
+                        {category.label} ({count})
+                      </span>
                     </button>
                   );
                 })}
@@ -3274,58 +3494,131 @@ export default function App() {
               </div>
 
               <div className="flex-1 min-h-0">
-              <div className="space-y-2 room-shop-scroll h-full pr-1">
-                {pagedRoomShopItems.length ? (
-                  pagedRoomShopItems.map((item) => {
-                    const notEnoughCoins = !item.owned && (roomState?.coins ?? 0) < item.cost_coins;
-                    const disabled =
-                      roomBusyKey === item.key || Boolean(roomLayoutSavingKey) || !item.unlocked || notEnoughCoins;
-                    let buttonLabel = `Buy ${item.cost_coins} Coins`;
-                    let nextAction: "purchase" | "equip" | "unequip" = "purchase";
+              <div className="room-shop-scroll h-full pr-1">
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={`${roomShopCategory}-${roomShopPage}`}
+                    className="space-y-2"
+                    initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 10 }}
+                    animate={{
+                      opacity: 1,
+                      y: 0,
+                      transition: prefersReducedMotion
+                        ? { duration: 0.12 }
+                        : { duration: 0.2, ease: [0.22, 1, 0.36, 1], staggerChildren: 0.04, delayChildren: 0.02 },
+                    }}
+                    exit={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: -8, transition: { duration: 0.14 } }}
+                  >
+                    {pagedRoomShopItems.length ? (
+                      pagedRoomShopItems.map((item) => {
+                        const notEnoughCoins = !item.owned && (roomState?.coins ?? 0) < item.cost_coins;
+                        const disabled =
+                          roomBusyKey === item.key || Boolean(roomLayoutSavingKey) || !item.unlocked || notEnoughCoins;
+                        const itemFeedback = roomActionFeedback?.itemKey === item.key ? roomActionFeedback : null;
+                        let buttonLabel = `Buy ${item.cost_coins} Coins`;
+                        let nextAction: "purchase" | "equip" | "unequip" = "purchase";
 
-                    if (!item.unlocked) {
-                      buttonLabel = `Unlock at ${item.min_xp} XP`;
-                    } else if (notEnoughCoins) {
-                      buttonLabel = `Need ${item.cost_coins} Coins`;
-                    } else if (item.owned && item.equipped) {
-                      buttonLabel = "Unequip";
-                      nextAction = "unequip";
-                    } else if (item.owned) {
-                      buttonLabel = "Equip";
-                      nextAction = "equip";
-                    }
+                        if (!item.unlocked) {
+                          buttonLabel = `Unlock at ${item.min_xp} XP`;
+                        } else if (notEnoughCoins) {
+                          buttonLabel = `Need ${item.cost_coins} Coins`;
+                        } else if (item.owned && item.equipped) {
+                          buttonLabel = "Unequip";
+                          nextAction = "unequip";
+                        } else if (item.owned) {
+                          buttonLabel = "Equip";
+                          nextAction = "equip";
+                        }
 
-                    return (
-                      <div
-                        key={item.key}
-                        className="rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
-                      >
-                        <div>
-                          <p className="font-bold text-slate-900">{item.name}</p>
-                          <p className="text-sm text-slate-600">{item.description}</p>
-                          <p className="text-xs font-semibold text-slate-500 mt-1">
-                            Category: {ROOM_SHOP_CATEGORIES.find((category) => category.id === getRoomShopCategory(item.key))?.label ?? "Misc"}{" "}
-                            | Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRoomAction(nextAction, item.key)}
-                          disabled={disabled}
-                          className={`px-3 py-2 rounded-xl border-2 text-sm font-bold ${
-                            item.owned && item.equipped
-                              ? "border-emerald-300 bg-emerald-100 text-emerald-700"
-                              : "border-slate-300 bg-white text-slate-700"
-                          } disabled:opacity-50`}
-                        >
-                          {roomBusyKey === item.key ? "Saving..." : buttonLabel}
-                        </button>
-                      </div>
-                    );
-                  })
-                ) : (
-                  <p className="text-slate-500">No room items found in this category.</p>
-                )}
+                        return (
+                          <motion.div
+                            key={item.key}
+                            layout
+                            initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 12 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={prefersReducedMotion ? { duration: 0.12 } : { duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                            className="relative overflow-hidden rounded-xl border-2 border-slate-200 bg-slate-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3"
+                          >
+                            <AnimatePresence>
+                              {itemFeedback?.action === "equip" && !prefersReducedMotion && (
+                                <motion.div
+                                  key={`equip-${itemFeedback.token}`}
+                                  className="pointer-events-none absolute inset-0 rounded-xl bg-emerald-200/55"
+                                  initial={{ opacity: 0, scale: 0.98 }}
+                                  animate={{ opacity: [0, 0.85, 0], scale: [0.98, 1.02, 1] }}
+                                  exit={{ opacity: 0 }}
+                                  transition={{ duration: 0.45, ease: "easeOut" }}
+                                />
+                              )}
+                              {itemFeedback?.action === "unequip" && !prefersReducedMotion && (
+                                <motion.div
+                                  key={`unequip-${itemFeedback.token}`}
+                                  className="pointer-events-none absolute inset-0 rounded-xl bg-slate-200/50"
+                                  initial={{ opacity: 0 }}
+                                  animate={{ opacity: [0, 0.55, 0] }}
+                                  exit={{ opacity: 0 }}
+                                  transition={{ duration: 0.42, ease: "easeOut" }}
+                                />
+                              )}
+                            </AnimatePresence>
+                            <div className="relative z-10">
+                              <p className="font-bold text-slate-900">{item.name}</p>
+                              <p className="text-sm text-slate-600">{item.description}</p>
+                              <p className="text-xs font-semibold text-slate-500 mt-1">
+                                Category: {ROOM_SHOP_CATEGORIES.find((category) => category.id === getRoomShopCategory(item.key))?.label ?? "Misc"}{" "}
+                                | Unlock: {item.min_xp} XP | Cost: {item.cost_coins} Coins
+                              </p>
+                            </div>
+                            <div className="relative z-10">
+                              <button
+                                type="button"
+                                onClick={() => handleRoomAction(nextAction, item.key)}
+                                disabled={disabled}
+                                className={`menu-ripple-button relative overflow-hidden px-3 py-2 rounded-xl border-2 text-sm font-bold ${
+                                  item.owned && item.equipped
+                                    ? "border-emerald-300 bg-emerald-100 text-emerald-700"
+                                    : "border-slate-300 bg-white text-slate-700"
+                                } disabled:opacity-50`}
+                              >
+                                {roomBusyKey === item.key ? "Saving..." : buttonLabel}
+                              </button>
+                              <AnimatePresence>
+                                {itemFeedback?.action === "purchase" && !prefersReducedMotion && (
+                                  <motion.div
+                                    key={`purchase-${itemFeedback.token}`}
+                                    className="pointer-events-none absolute left-1/2 top-1/2"
+                                    initial={{ opacity: 0 }}
+                                    animate={{ opacity: 1 }}
+                                    exit={{ opacity: 0 }}
+                                  >
+                                    {[0, 1, 2].map((coinIndex) => (
+                                      <motion.span
+                                        key={coinIndex}
+                                        className="absolute text-[11px] font-black text-amber-600"
+                                        initial={{ x: "-50%", y: 8, opacity: 0, scale: 0.8 }}
+                                        animate={{
+                                          x: `calc(-50% + ${(coinIndex - 1) * 16}px)`,
+                                          y: -24 - coinIndex * 8,
+                                          opacity: [0, 1, 0],
+                                          scale: [0.8, 1.1, 0.92],
+                                        }}
+                                        transition={{ duration: 0.56, delay: coinIndex * 0.04, ease: "easeOut" }}
+                                      >
+                                        +{Math.max(1, Math.round(item.cost_coins / 3))}
+                                      </motion.span>
+                                    ))}
+                                  </motion.div>
+                                )}
+                              </AnimatePresence>
+                            </div>
+                          </motion.div>
+                        );
+                      })
+                    ) : (
+                      <p className="text-slate-500">No room items found in this category.</p>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
               </div>
               </div>
 
@@ -3337,9 +3630,7 @@ export default function App() {
         {view === "dashboard" && activeBook && (
           <motion.div 
             key="dashboard"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className="space-y-6"
           >
             <div className={roomMenuCardClass}>
@@ -3415,9 +3706,7 @@ export default function App() {
         {view === "achievements" && (
           <motion.div
             key="achievements"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className="space-y-6"
           >
             <div className={roomMenuCardClass}>
@@ -3445,7 +3734,7 @@ export default function App() {
               <div className={roomMenuBodyClass}>
                 {achievementsData?.achievements?.length ? (
                   <div className="space-y-3 pr-1">
-                    {achievementsData.achievements.map((achievement) => {
+                    {achievementsData.achievements.map((achievement, index) => {
                       const safeTarget = achievement.target == null ? null : Math.max(1, achievement.target);
                       const safeProgress = Math.max(0, achievement.progress);
                       const progressPct =
@@ -3456,8 +3745,15 @@ export default function App() {
                           : `${Math.min(safeProgress, safeTarget)}/${safeTarget}`;
 
                       return (
-                        <div
+                        <motion.div
                           key={achievement.key}
+                          initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={
+                            prefersReducedMotion
+                              ? { duration: 0.12 }
+                              : { duration: 0.24, delay: index * 0.03, ease: [0.22, 1, 0.36, 1] }
+                          }
                           className={`rounded-xl border-2 p-3 ${
                             achievement.is_unlocked
                               ? "border-emerald-200 bg-emerald-50"
@@ -3469,18 +3765,40 @@ export default function App() {
                               <p className="font-semibold text-slate-900">{achievement.title}</p>
                               <p className="text-xs text-slate-600 mt-1">{achievement.description}</p>
                             </div>
-                            <p className="text-xs font-bold text-slate-700 whitespace-nowrap">
+                            <div className="flex flex-col items-end gap-1">
+                              {achievement.is_unlocked && (
+                                <motion.span
+                                  className="achievement-unlocked-stamp rounded-full border border-emerald-300 bg-emerald-100 px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-emerald-700"
+                                  animate={
+                                    prefersReducedMotion ? { opacity: 1 } : { scale: [1, 1.12, 1], rotate: [0, -2, 0] }
+                                  }
+                                  transition={prefersReducedMotion ? { duration: 0 } : { duration: 0.45, delay: 0.05 }}
+                                >
+                                  Unlocked
+                                </motion.span>
+                              )}
+                              <p className="text-xs font-bold text-slate-700 whitespace-nowrap">
                               +{achievement.reward_xp} XP • +{achievement.reward_coins} Coins
                             </p>
+                          </div>
                           </div>
                           <div className="mt-2 flex items-center justify-between text-xs font-semibold text-slate-600">
                             <span>{progressLabel}</span>
                             {achievement.is_repeatable && <span className="text-emerald-700">Repeatable</span>}
                           </div>
                           <div className="mt-2 h-2 bg-white rounded-full border border-slate-200 overflow-hidden">
-                            <div className="h-full bg-emerald-400" style={{ width: `${progressPct}%` }} />
+                            <motion.div
+                              className="h-full bg-emerald-400 origin-left"
+                              initial={{ scaleX: 0 }}
+                              animate={{ scaleX: progressPct / 100 }}
+                              transition={
+                                prefersReducedMotion
+                                  ? { duration: 0.12 }
+                                  : { duration: 0.45, delay: index * 0.02, ease: [0.22, 1, 0.36, 1] }
+                              }
+                            />
                           </div>
-                        </div>
+                        </motion.div>
                       );
                     })}
                   </div>
@@ -3495,9 +3813,7 @@ export default function App() {
         {view === "hallOfReads" && (
           <motion.div
             key="hallOfReads"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
+            {...directionalViewMotion}
             className="space-y-6"
           >
             <div className={roomMenuCardClass}>
@@ -3590,7 +3906,7 @@ export default function App() {
 
                 {completedBooks.length ? (
                   <div className="space-y-3 pr-1">
-                    {completedBooks.map((book) => {
+                    {completedBooks.map((book, index) => {
                       const sizeBadge = getBookSizeBadge(Math.max(0, Number(book.total_pages || 0)));
                       const frameStyle = getHallFrameStyle(book.completion_number);
                       const selectedSticker = getStickerOption(book.sticker_key);
@@ -3599,7 +3915,17 @@ export default function App() {
                       const isDraggingSticker = hallStickerDragState?.completionNumber === book.completion_number;
 
                       return (
-                        <div key={book.completion_number} className={frameStyle.wrapperClass}>
+                        <motion.div
+                          key={book.completion_number}
+                          className={frameStyle.wrapperClass}
+                          initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.988 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          transition={
+                            prefersReducedMotion
+                              ? { duration: 0.12 }
+                              : { duration: 0.28, delay: index * 0.045, ease: [0.22, 1, 0.36, 1] }
+                          }
+                        >
                           <div
                             ref={(element) => {
                               hallCardRefs.current[book.completion_number] = element;
@@ -3629,8 +3955,10 @@ export default function App() {
                                 onPointerUp={(event) => handleHallStickerPointerUp(event, book)}
                                 onPointerCancel={(event) => handleHallStickerPointerUp(event, book)}
                                 disabled={completedBookSavingKey === book.completion_number}
-                                className={`absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-[radial-gradient(circle_at_32%_24%,#fff7d1,#fde68a)] px-3 py-2 text-lg shadow-[0_4px_0_0_rgba(180,83,9,0.35)] transition-transform ${
-                                  isDraggingSticker ? "cursor-grabbing scale-105 rotate-6" : "-rotate-8 cursor-grab hover:scale-105"
+                                className={`hall-sticker-button absolute z-20 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-amber-200 bg-[radial-gradient(circle_at_32%_24%,#fff7d1,#fde68a)] px-3 py-2 text-lg shadow-[0_4px_0_0_rgba(180,83,9,0.35)] transition-transform ${
+                                  isDraggingSticker ? "hall-sticker-button-dragging cursor-grabbing" : "cursor-grab hover:scale-105"
+                                } ${
+                                  hallStickerSnapCompletion === book.completion_number ? "hall-sticker-button-snap" : ""
                                 } disabled:opacity-50`}
                                 style={{
                                   left: `${stickerPosition.x}%`,
@@ -3667,7 +3995,7 @@ export default function App() {
                               </span>
                             </div>
                           </div>
-                        </div>
+                        </motion.div>
                       );
                     })}
                   </div>
