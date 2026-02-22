@@ -1714,7 +1714,11 @@ export default function App() {
       if (!activeBookData && booksData.length > 0) {
         activeBookData = booksData.find((book) => Boolean(book.is_active)) ?? booksData[0];
       }
-      if (booksData.length === 0 && activeBookData) {
+      const activeBookIsCompleted =
+        Number(activeBookData?.total_pages ?? 0) > 0 &&
+        Number(activeBookData?.current_page ?? 0) >= Number(activeBookData?.total_pages ?? 0);
+
+      if (booksData.length === 0 && activeBookData && !activeBookIsCompleted) {
         booksData = [activeBookData];
         setBooks(booksData);
       }

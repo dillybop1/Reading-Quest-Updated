@@ -255,6 +255,33 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           ? await tryRecordBookCompletion(db, student.studentId, Math.floor(Number(book_id)))
           : null;
 
+        if (crossedFinish) {
+          // When a book is completed, remove it from active rotation so it no longer appears on the shelf.
+          await db.query("UPDATE books SET is_active = false WHERE student_id = $1 AND is_active = true", [
+            student.studentId,
+          ]);
+
+          const nextActiveResult = await db.query(
+            `
+              SELECT id
+              FROM books
+              WHERE student_id = $1
+                AND id <> $2
+                AND (COALESCE(total_pages, 0) <= 0 OR COALESCE(current_page, 0) < COALESCE(total_pages, 0))
+              ORDER BY id DESC
+              LIMIT 1
+            `,
+            [student.studentId, book_id]
+          );
+          const nextActiveId = Number(nextActiveResult.rows[0]?.id ?? 0);
+          if (Number.isFinite(nextActiveId) && nextActiveId > 0) {
+            await db.query("UPDATE books SET is_active = true WHERE id = $1 AND student_id = $2", [
+              nextActiveId,
+              student.studentId,
+            ]);
+          }
+        }
+
         const unlockedAchievements: AchievementUnlock[] = [];
         if (completion?.completion_number) {
           const bookUnlock = await awardBookCompletionAchievement(db, student.studentId, completion.completion_number);

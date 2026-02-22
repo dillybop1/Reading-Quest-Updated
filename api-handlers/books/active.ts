@@ -36,12 +36,51 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (req.method === "GET") {
-      const result = await query(
-        "SELECT * FROM books WHERE student_id = $1 AND is_active = true LIMIT 1",
+      const activeResult = await query(
+        "SELECT * FROM books WHERE student_id = $1 AND is_active = true ORDER BY id DESC LIMIT 1",
         [student.studentId]
       );
+      const activeBook = activeResult.rows[0] ?? null;
 
-      return res.status(200).json(result.rows[0] || null);
+      const activeCurrentPage = Number(activeBook?.current_page ?? 0);
+      const activeTotalPages = Number(activeBook?.total_pages ?? 0);
+      const activeBookCompleted =
+        Number.isFinite(activeTotalPages) && activeTotalPages > 0 && activeCurrentPage >= activeTotalPages;
+
+      if (activeBook?.id && activeBookCompleted) {
+        await query("UPDATE books SET is_active = false WHERE id = $1 AND student_id = $2", [
+          activeBook.id,
+          student.studentId,
+        ]);
+      }
+
+      const unfinishedResult = await query(
+        `
+          SELECT *
+          FROM books
+          WHERE student_id = $1
+            AND (COALESCE(total_pages, 0) <= 0 OR COALESCE(current_page, 0) < COALESCE(total_pages, 0))
+          ORDER BY is_active DESC, id DESC
+          LIMIT 1
+        `,
+        [student.studentId]
+      );
+      const unfinishedBook = unfinishedResult.rows[0] ?? null;
+
+      if (!unfinishedBook) {
+        return res.status(200).json(null);
+      }
+
+      if (!unfinishedBook.is_active) {
+        await query("UPDATE books SET is_active = false WHERE student_id = $1 AND is_active = true", [student.studentId]);
+        const updated = await query("UPDATE books SET is_active = true WHERE id = $1 AND student_id = $2 RETURNING *", [
+          unfinishedBook.id,
+          student.studentId,
+        ]);
+        return res.status(200).json(updated.rows[0] ?? unfinishedBook);
+      }
+
+      return res.status(200).json(unfinishedBook);
     }
 
     return res.status(405).json({ error: "Method not allowed" });
