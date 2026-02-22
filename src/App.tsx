@@ -3656,13 +3656,6 @@ export default function App() {
                             <div className="mt-3 flex flex-wrap gap-2 text-xs">
                               <span
                                 className={`rounded-full border px-2 py-1 font-semibold ${
-                                  selectedSticker?.chipClass ?? "border-slate-200 bg-white text-slate-600"
-                                }`}
-                              >
-                                Sticker: {selectedSticker ? `${selectedSticker.emoji} ${selectedSticker.label}` : "Not chosen"}
-                              </span>
-                              <span
-                                className={`rounded-full border px-2 py-1 font-semibold ${
                                   selectedRating?.chipClass ?? "border-slate-200 bg-white text-slate-600"
                                 }`}
                               >
