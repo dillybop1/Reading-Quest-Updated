@@ -3096,9 +3096,20 @@ export default function App() {
             {...directionalViewMotion}
             className={roomMenuCardClass}
           >
-            <h2 className="text-2xl font-bold mb-6 flex items-center gap-2">
-              <Plus className="text-amber-500" /> Add Your First Book to Your Bookshelf!
-            </h2>
+            <div className="mb-6 flex items-start justify-between gap-3">
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                <Plus className="text-amber-500" /> Add Your First Book to Your Bookshelf!
+              </h2>
+              <button
+                type="button"
+                onClick={openAdminPrompt}
+                className="p-2 rounded-xl border-2 border-slate-200 text-slate-300 hover:text-slate-400 hover:border-slate-300 transition-colors"
+                aria-label="Class tools"
+                title="Class tools"
+              >
+                <Shield className="w-4 h-4" />
+              </button>
+            </div>
             <form onSubmit={handleNewBook} className={`space-y-4 ${roomMenuBodyClass}`}>
               <div>
                 <label className="block text-sm font-bold mb-1">Book Title</label>
